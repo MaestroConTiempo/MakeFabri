@@ -27,6 +27,7 @@ import {
   exportAllData,
   importAllData,
   resetAllData,
+  getCloudSyncState,
 } from '@/lib/storage';
 import {
   connectGoogleCalendar,
@@ -58,6 +59,7 @@ const SettingsPage: React.FC = () => {
   const [googleConnected, setGoogleConnected] = useState(isGoogleCalendarConnected());
   const [, setRefresh] = useState(0);
   const googleConfigured = hasGoogleCalendarClientId();
+  const cloudSync = getCloudSyncState();
 
   const update = (patch: Partial<AppSettings>) => {
     const next = { ...settings, ...patch };
@@ -216,6 +218,19 @@ const SettingsPage: React.FC = () => {
         </div>
 
         {/* Data management */}
+        <div className="pt-4 border-t border-border space-y-3">
+          <h3 className="font-display font-semibold text-sm">Supabase</h3>
+          {cloudSync.configured ? (
+            <p className="text-sm text-muted-foreground">
+              Estado: {cloudSync.status} · {cloudSync.message}
+            </p>
+          ) : (
+            <p className="text-sm text-muted-foreground">
+              No configurado. Añade `VITE_SUPABASE_URL` y `VITE_SUPABASE_ANON_KEY` en tu entorno.
+            </p>
+          )}
+        </div>
+
         <div className="pt-4 border-t border-border space-y-3">
           <h3 className="font-display font-semibold text-sm">Datos</h3>
           <Button variant="outline" onClick={handleExport} className="w-full gap-2">
