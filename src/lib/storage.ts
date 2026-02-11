@@ -14,6 +14,8 @@ const TABLES = {
   settings: 'mt_settings',
 };
 
+const sharedTasksMode = import.meta.env.VITE_SUPABASE_SHARED_TASKS === 'true';
+
 type CloudSyncStatus = 'disabled' | 'connecting' | 'ready' | 'error';
 
 interface CloudSyncState {
@@ -62,7 +64,7 @@ interface SettingsRow {
 
 let cloudSyncStatus: CloudSyncStatus = hasSupabaseConfig() ? 'connecting' : 'disabled';
 let cloudSyncMessage = hasSupabaseConfig()
-  ? 'Sincronización con Supabase pendiente'
+  ? 'Sincronizacion con Supabase pendiente'
   : 'Supabase no configurado';
 
 let cloudSyncInitialized = false;
@@ -205,8 +207,9 @@ function enqueueCloudWrite(op: () => Promise<void>) {
       await op();
       setCloudSyncStatus('ready', 'Datos sincronizados con Supabase');
     })
-    .catch(() => {
-      setCloudSyncStatus('error', 'Error al sincronizar con Supabase');
+    .catch((error: unknown) => {
+      const detail = error instanceof Error ? error.message : 'Error desconocido';
+      setCloudSyncStatus('error', 'Error al sincronizar con Supabase: ' + detail);
     });
 }
 
@@ -218,22 +221,33 @@ async function ensureCloudUserId(): Promise<string | null> {
   setCloudSyncStatus('connecting', 'Conectando con Supabase...');
 
   cloudUserPromise = (async () => {
-    const { data: userData } = await supabase.auth.getUser();
-    if (userData.user) {
-      cachedCloudUserId = userData.user.id;
-      setCloudSyncStatus('ready', 'Sesión anónima de Supabase activa');
-      return cachedCloudUserId;
-    }
+    try {
+      const { data: userData, error: userError } = await supabase.auth.getUser();
+      if (userError) {
+        console.error('Supabase getUser error:', userError.message);
+      }
 
-    const { data: anonData, error: anonError } = await supabase.auth.signInAnonymously();
-    if (anonError || !anonData.user) {
-      setCloudSyncStatus('error', 'No se pudo crear la sesión anónima de Supabase');
+      if (userData.user) {
+        cachedCloudUserId = userData.user.id;
+        setCloudSyncStatus('ready', 'Sesion anonima de Supabase activa');
+        return cachedCloudUserId;
+      }
+
+      const { data: anonData, error: anonError } = await supabase.auth.signInAnonymously();
+      if (anonError || !anonData.user) {
+        const detail = anonError?.message ?? 'Supabase no devolvio usuario en signInAnonymously';
+        setCloudSyncStatus('error', 'No se pudo crear la sesion anonima de Supabase: ' + detail);
+        return null;
+      }
+
+      cachedCloudUserId = anonData.user.id;
+      setCloudSyncStatus('ready', 'Sesion anonima de Supabase activa');
+      return cachedCloudUserId;
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : 'Error desconocido';
+      setCloudSyncStatus('error', 'No se pudo crear la sesion anonima de Supabase: ' + detail);
       return null;
     }
-
-    cachedCloudUserId = anonData.user.id;
-    setCloudSyncStatus('ready', 'Sesión anónima de Supabase activa');
-    return cachedCloudUserId;
   })().finally(() => {
     cloudUserPromise = null;
   });
@@ -251,6 +265,10 @@ async function pushTasksToCloud(userId: string, tasks: Task[]) {
       .upsert(rows, { onConflict: 'id' });
     if (upsertError) throw upsertError;
   }
+
+  // In shared mode we do not prune stale rows here to avoid deleting
+  // tasks created by another device that has not synced yet.
+  if (sharedTasksMode) return;
 
   const { data: remoteRows, error: remoteError } = await supabase
     .from(TABLES.tasks)
@@ -320,8 +338,12 @@ async function pushSettingsToCloud(userId: string, settings: AppSettings) {
 async function removeAllFromCloud(userId: string) {
   if (!supabase) return;
 
+  const tasksDeleteQuery = sharedTasksMode
+    ? supabase.from(TABLES.tasks).delete().not('id', 'is', null)
+    : supabase.from(TABLES.tasks).delete().eq('user_id', userId);
+
   const [tasksDelete, highlightsDelete, settingsDelete] = await Promise.all([
-    supabase.from(TABLES.tasks).delete().eq('user_id', userId),
+    tasksDeleteQuery,
     supabase.from(TABLES.highlights).delete().eq('user_id', userId),
     supabase.from(TABLES.settings).delete().eq('user_id', userId),
   ]);
@@ -483,12 +505,17 @@ export async function initializeCloudSync() {
   if (!userId) return;
 
   try {
+    const tasksQuery = supabase
+      .from(TABLES.tasks)
+      .select('*')
+      .order('order_index', { ascending: true });
+
+    const scopedTasksQuery = sharedTasksMode
+      ? tasksQuery
+      : tasksQuery.eq('user_id', userId);
+
     const [tasksResult, highlightsResult, settingsResult] = await Promise.all([
-      supabase
-        .from(TABLES.tasks)
-        .select('*')
-        .eq('user_id', userId)
-        .order('order_index', { ascending: true }),
+      scopedTasksQuery,
       supabase
         .from(TABLES.highlights)
         .select('*')
@@ -529,9 +556,10 @@ export async function initializeCloudSync() {
       ]);
     }
 
-    setCloudSyncStatus('ready', 'Sincronización con Supabase activa');
-  } catch {
-    setCloudSyncStatus('error', 'No se pudo inicializar la sincronización con Supabase');
+    setCloudSyncStatus('ready', 'Sincronizacion con Supabase activa');
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : 'Error desconocido';
+    setCloudSyncStatus('error', 'No se pudo inicializar la sincronizacion con Supabase: ' + detail);
   } finally {
     suppressCloudWrites = false;
   }
