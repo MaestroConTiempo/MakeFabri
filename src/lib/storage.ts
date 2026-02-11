@@ -181,18 +181,15 @@ function fromHighlightRow(row: HighlightRow): DailyHighlight {
 }
 
 function normalizeHighlights(highlights: DailyHighlight[]): DailyHighlight[] {
-  if (!sharedHighlightsMode) return highlights;
+  return [...highlights].sort((a, b) => {
+    if (a.date !== b.date) return b.date.localeCompare(a.date);
 
-  const latestByDate = new Map<string, DailyHighlight>();
-  for (const highlight of highlights) {
-    const current = latestByDate.get(highlight.date);
-    if (!current || Date.parse(highlight.updatedAt) > Date.parse(current.updatedAt)) {
-      latestByDate.set(highlight.date, highlight);
-    }
-  }
+    const aUpdated = Date.parse(a.updatedAt);
+    const bUpdated = Date.parse(b.updatedAt);
+    if (aUpdated !== bUpdated) return bUpdated - aUpdated;
 
-  return Array.from(latestByDate.values())
-    .sort((a, b) => b.date.localeCompare(a.date));
+    return b.createdAt.localeCompare(a.createdAt);
+  });
 }
 
 function toSettingsRow(settings: AppSettings, userId: string): SettingsRow {
@@ -480,7 +477,8 @@ export function saveHighlights(highlights: DailyHighlight[]) {
 }
 
 export function getHighlightByDate(date: string): DailyHighlight | undefined {
-  return getHighlights().find(h => h.date === date);
+  const highlightsForDate = getHighlights().filter(h => h.date === date);
+  return highlightsForDate[0];
 }
 
 export function getHighlightsRange(startDate: string, endDate: string): DailyHighlight[] {
@@ -510,6 +508,22 @@ export function upsertHighlight(data: Omit<DailyHighlight, 'id' | 'createdAt' | 
     createdAt: now,
     updatedAt: now,
   };
+  highlights.push(highlight);
+  saveHighlights(highlights);
+  return highlight;
+}
+
+export function createHighlight(data: Omit<DailyHighlight, 'id' | 'createdAt' | 'updatedAt'>): DailyHighlight {
+  const highlights = getHighlights();
+  const now = new Date().toISOString();
+
+  const highlight: DailyHighlight = {
+    ...data,
+    id: uuid(),
+    createdAt: now,
+    updatedAt: now,
+  };
+
   highlights.push(highlight);
   saveHighlights(highlights);
   return highlight;

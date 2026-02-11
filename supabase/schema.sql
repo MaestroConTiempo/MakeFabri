@@ -39,8 +39,7 @@ create table if not exists public.mt_highlights (
   google_calendar_event_link text null,
   completed_at timestamptz null,
   created_at timestamptz not null default timezone('utc'::text, now()),
-  updated_at timestamptz not null default timezone('utc'::text, now()),
-  unique (user_id, date)
+  updated_at timestamptz not null default timezone('utc'::text, now())
 );
 
 create table if not exists public.mt_settings (

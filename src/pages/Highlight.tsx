@@ -141,6 +141,7 @@ const HighlightPage: React.FC = () => {
         open={modalOpen}
         onClose={() => setModalOpen(false)}
         onSave={handleSave}
+        willReplaceExisting
       />
     </div>
   );

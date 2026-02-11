@@ -24,6 +24,7 @@ interface HighlightModalProps {
   }) => void | Promise<void>;
   initialTitle?: string;
   initialTaskId?: string;
+  willReplaceExisting?: boolean;
 }
 
 const DURATIONS = [30, 60, 90];
@@ -35,6 +36,7 @@ const HighlightModal: React.FC<HighlightModalProps> = ({
   onSave,
   initialTitle = '',
   initialTaskId,
+  willReplaceExisting = true,
 }) => {
   const settings = getSettings();
   const [title, setTitle] = useState(initialTitle);
@@ -85,9 +87,15 @@ const HighlightModal: React.FC<HighlightModalProps> = ({
           <DialogTitle className="font-display">Highlight de mañana</DialogTitle>
         </DialogHeader>
 
-        {existingHighlight && (
+        {existingHighlight && willReplaceExisting && (
           <div className="highlight-banner text-sm mb-2">
-            ⚠️ Esto reemplazará: <strong>{existingHighlight.title}</strong>
+            Esto reemplazara: <strong>{existingHighlight.title}</strong>
+          </div>
+        )}
+
+        {existingHighlight && !willReplaceExisting && (
+          <div className="highlight-banner text-sm mb-2">
+            Se creara un nuevo highlight y el actual quedara en el historial.
           </div>
         )}
 
@@ -192,3 +200,4 @@ const HighlightModal: React.FC<HighlightModalProps> = ({
 };
 
 export default HighlightModal;
+
