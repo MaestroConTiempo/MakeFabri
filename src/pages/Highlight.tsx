@@ -60,6 +60,14 @@ const HighlightPage: React.FC = () => {
     [tomorrowDate]
   );
 
+  const handleToggleCompletion = () => {
+    if (!highlight) return;
+    const completed = !highlight.completedAt;
+    setHighlightCompletion(highlight.id, completed);
+    toast.success(completed ? 'Highlight marcado como completado' : 'Highlight marcado como no completado');
+    setRefresh(r => r + 1);
+  };
+
   const handleCompleteTodayHighlight = () => {
     if (!todayHighlight) return;
     setHighlightCompletion(todayHighlight.id, true);
@@ -144,6 +152,16 @@ const HighlightPage: React.FC = () => {
         >
           {highlight ? "Cambiar Highlight" : "Establecer Highlight de mañana"}
         </Button>
+
+        {highlight && (
+          <Button
+            variant={highlight.completedAt ? 'outline' : 'default'}
+            className="w-full mt-3"
+            onClick={handleToggleCompletion}
+          >
+            {highlight.completedAt ? 'Marcar como no completado' : 'Marcar como completado'}
+          </Button>
+        )}
 
         {highlight && (
           <div className="flex gap-3 mt-4">
