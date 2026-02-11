@@ -15,6 +15,7 @@ const TABLES = {
 };
 
 const sharedTasksMode = import.meta.env.VITE_SUPABASE_SHARED_TASKS === 'true';
+const sharedHighlightsMode = sharedTasksMode;
 
 type CloudSyncStatus = 'disabled' | 'connecting' | 'ready' | 'error';
 
@@ -179,6 +180,21 @@ function fromHighlightRow(row: HighlightRow): DailyHighlight {
   };
 }
 
+function normalizeHighlights(highlights: DailyHighlight[]): DailyHighlight[] {
+  if (!sharedHighlightsMode) return highlights;
+
+  const latestByDate = new Map<string, DailyHighlight>();
+  for (const highlight of highlights) {
+    const current = latestByDate.get(highlight.date);
+    if (!current || Date.parse(highlight.updatedAt) > Date.parse(current.updatedAt)) {
+      latestByDate.set(highlight.date, highlight);
+    }
+  }
+
+  return Array.from(latestByDate.values())
+    .sort((a, b) => b.date.localeCompare(a.date));
+}
+
 function toSettingsRow(settings: AppSettings, userId: string): SettingsRow {
   return {
     user_id: userId,
@@ -303,6 +319,10 @@ async function pushHighlightsToCloud(userId: string, highlights: DailyHighlight[
     if (upsertError) throw upsertError;
   }
 
+  // In shared mode we avoid stale pruning to prevent one device
+  // from deleting highlights created/updated by another one.
+  if (sharedHighlightsMode) return;
+
   const { data: remoteRows, error: remoteError } = await supabase
     .from(TABLES.highlights)
     .select('id')
@@ -335,6 +355,22 @@ async function pushSettingsToCloud(userId: string, settings: AppSettings) {
   if (upsertError) throw upsertError;
 }
 
+async function deleteTaskFromCloud(userId: string, id: string) {
+  if (!supabase) return;
+
+  let query = supabase
+    .from(TABLES.tasks)
+    .delete()
+    .eq('id', id);
+
+  if (!sharedTasksMode) {
+    query = query.eq('user_id', userId);
+  }
+
+  const { error } = await query;
+  if (error) throw error;
+}
+
 async function removeAllFromCloud(userId: string) {
   if (!supabase) return;
 
@@ -342,9 +378,13 @@ async function removeAllFromCloud(userId: string) {
     ? supabase.from(TABLES.tasks).delete().not('id', 'is', null)
     : supabase.from(TABLES.tasks).delete().eq('user_id', userId);
 
+  const highlightsDeleteQuery = sharedHighlightsMode
+    ? supabase.from(TABLES.highlights).delete().not('id', 'is', null)
+    : supabase.from(TABLES.highlights).delete().eq('user_id', userId);
+
   const [tasksDelete, highlightsDelete, settingsDelete] = await Promise.all([
     tasksDeleteQuery,
-    supabase.from(TABLES.highlights).delete().eq('user_id', userId),
+    highlightsDeleteQuery,
     supabase.from(TABLES.settings).delete().eq('user_id', userId),
   ]);
 
@@ -405,18 +445,37 @@ export function archiveTask(id: string) {
   updateTask(id, { status: 'archived' });
 }
 
-// Highlights
-export function getHighlights(): DailyHighlight[] {
-  return readJSON<DailyHighlight[]>(KEYS.highlights, []);
-}
+export function deleteTask(id: string): boolean {
+  const tasks = getTasks();
+  const idx = tasks.findIndex(t => t.id === id);
+  if (idx === -1) return false;
 
-export function saveHighlights(highlights: DailyHighlight[]) {
-  writeHighlightsLocal(highlights);
+  tasks.splice(idx, 1);
+  saveTasks(tasks);
 
   enqueueCloudWrite(async () => {
     const userId = await ensureCloudUserId();
     if (!userId) return;
-    await pushHighlightsToCloud(userId, highlights);
+    await deleteTaskFromCloud(userId, id);
+  });
+
+  return true;
+}
+
+// Highlights
+export function getHighlights(): DailyHighlight[] {
+  const highlights = readJSON<DailyHighlight[]>(KEYS.highlights, []);
+  return normalizeHighlights(highlights);
+}
+
+export function saveHighlights(highlights: DailyHighlight[]) {
+  const normalized = normalizeHighlights(highlights);
+  writeHighlightsLocal(normalized);
+
+  enqueueCloudWrite(async () => {
+    const userId = await ensureCloudUserId();
+    if (!userId) return;
+    await pushHighlightsToCloud(userId, normalized);
   });
 }
 
@@ -457,13 +516,21 @@ export function upsertHighlight(data: Omit<DailyHighlight, 'id' | 'createdAt' | 
 }
 
 export function markHighlightDone(id: string) {
+  setHighlightCompletion(id, true);
+}
+
+export function setHighlightCompletion(id: string, completed: boolean): DailyHighlight | null {
   const highlights = getHighlights();
   const idx = highlights.findIndex(h => h.id === id);
-  if (idx >= 0) {
-    highlights[idx].completedAt = new Date().toISOString();
-    highlights[idx].updatedAt = new Date().toISOString();
-    saveHighlights(highlights);
-  }
+  if (idx === -1) return null;
+
+  highlights[idx] = {
+    ...highlights[idx],
+    completedAt: completed ? new Date().toISOString() : undefined,
+    updatedAt: new Date().toISOString(),
+  };
+  saveHighlights(highlights);
+  return highlights[idx];
 }
 
 export function updateHighlight(id: string, updates: Partial<DailyHighlight>): DailyHighlight | null {
@@ -492,8 +559,8 @@ export function saveSettings(settings: AppSettings) {
 }
 
 // Cloud bootstrap
-export async function initializeCloudSync() {
-  if (cloudSyncInitialized) return;
+export async function initializeCloudSync(force = false) {
+  if (cloudSyncInitialized && !force) return;
   cloudSyncInitialized = true;
 
   if (!hasSupabaseConfig() || !supabase) {
@@ -510,17 +577,22 @@ export async function initializeCloudSync() {
       .select('*')
       .order('order_index', { ascending: true });
 
+    const highlightsQuery = supabase
+      .from(TABLES.highlights)
+      .select('*')
+      .order('date', { ascending: false });
+
     const scopedTasksQuery = sharedTasksMode
       ? tasksQuery
       : tasksQuery.eq('user_id', userId);
 
+    const scopedHighlightsQuery = sharedHighlightsMode
+      ? highlightsQuery
+      : highlightsQuery.eq('user_id', userId);
+
     const [tasksResult, highlightsResult, settingsResult] = await Promise.all([
       scopedTasksQuery,
-      supabase
-        .from(TABLES.highlights)
-        .select('*')
-        .eq('user_id', userId)
-        .order('date', { ascending: false }),
+      scopedHighlightsQuery,
       supabase
         .from(TABLES.settings)
         .select('*')
@@ -546,7 +618,7 @@ export async function initializeCloudSync() {
 
     if (remoteHasData) {
       writeTasksLocal(remoteTasks);
-      writeHighlightsLocal(remoteHighlights);
+      writeHighlightsLocal(normalizeHighlights(remoteHighlights));
       writeSettingsLocal(remoteSettings || { ...DEFAULT_SETTINGS });
     } else if (localHasData) {
       await Promise.all([

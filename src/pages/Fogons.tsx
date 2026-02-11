@@ -1,4 +1,4 @@
-import React, { useState, useCallback } from 'react';
+import React, { useState, useCallback, useEffect } from 'react';
 import WaveHeader from '@/components/WaveHeader';
 import HighlightModal from '@/components/HighlightModal';
 import { Button } from '@/components/ui/button';
@@ -8,9 +8,11 @@ import {
   createTask,
   updateTask,
   archiveTask,
+  deleteTask,
   getHighlightByDate,
   upsertHighlight,
   updateHighlight,
+  initializeCloudSync,
 } from '@/lib/storage';
 import { getTomorrowDate, buildScheduledAt } from '@/lib/dates';
 import { syncHighlightToGoogleCalendar, hasGoogleCalendarClientId, getGoogleCalendarErrorMessage } from '@/lib/googleCalendar';
@@ -38,6 +40,18 @@ const FogonsPage: React.FC = () => {
   const tomorrowHighlight = getHighlightByDate(tomorrowDate);
 
   const doRefresh = () => setRefresh(r => r + 1);
+
+  useEffect(() => {
+    let disposed = false;
+
+    void initializeCloudSync(true).finally(() => {
+      if (!disposed) doRefresh();
+    });
+
+    return () => {
+      disposed = true;
+    };
+  }, []);
 
   const handleAddTask = (bucket: Bucket) => {
     if (!newTitle.trim()) return;
@@ -151,6 +165,15 @@ const FogonsPage: React.FC = () => {
                 <DropdownMenuContent align="end">
                   <DropdownMenuItem onClick={() => { archiveTask(task.id); doRefresh(); }}>
                     Archivar
+                  </DropdownMenuItem>
+                  <DropdownMenuItem
+                    className="text-destructive focus:text-destructive"
+                    onClick={() => {
+                      deleteTask(task.id);
+                      doRefresh();
+                    }}
+                  >
+                    Eliminar
                   </DropdownMenuItem>
                 </DropdownMenuContent>
               </DropdownMenu>

@@ -1,12 +1,12 @@
-import React, { useState, useCallback } from 'react';
+import React, { useState, useCallback, useEffect } from 'react';
 import WaveHeader from '@/components/WaveHeader';
 import HighlightModal from '@/components/HighlightModal';
-import { getHighlightByDate, upsertHighlight, updateHighlight } from '@/lib/storage';
+import { getHighlightByDate, upsertHighlight, updateHighlight, setHighlightCompletion, initializeCloudSync } from '@/lib/storage';
 import { getTomorrowDate, buildScheduledAt } from '@/lib/dates';
 import { generateGoogleCalendarUrl, downloadICS } from '@/lib/calendar';
 import { syncHighlightToGoogleCalendar, hasGoogleCalendarClientId, getGoogleCalendarErrorMessage } from '@/lib/googleCalendar';
 import { Button } from '@/components/ui/button';
-import { Calendar, Download, ExternalLink } from 'lucide-react';
+import { Download, ExternalLink } from 'lucide-react';
 import { format } from 'date-fns';
 import { toast } from 'sonner';
 
@@ -16,6 +16,18 @@ const HighlightPage: React.FC = () => {
 
   const tomorrowDate = getTomorrowDate();
   const highlight = getHighlightByDate(tomorrowDate);
+
+  useEffect(() => {
+    let disposed = false;
+
+    void initializeCloudSync(true).finally(() => {
+      if (!disposed) setRefresh(r => r + 1);
+    });
+
+    return () => {
+      disposed = true;
+    };
+  }, []);
 
   const handleSave = useCallback(
     async (data: { title: string; time: string; durationMinutes: number; remindBeforeMinutes: number; taskId?: string }) => {
@@ -45,6 +57,14 @@ const HighlightPage: React.FC = () => {
     },
     [tomorrowDate]
   );
+
+  const handleToggleCompletion = () => {
+    if (!highlight) return;
+    const completed = !highlight.completedAt;
+    setHighlightCompletion(highlight.id, completed);
+    toast.success(completed ? 'Highlight marcado como completado' : 'Highlight marcado como no completado');
+    setRefresh(r => r + 1);
+  };
 
   return (
     <div className="min-h-screen pb-24 flex flex-col">
@@ -86,6 +106,16 @@ const HighlightPage: React.FC = () => {
         </Button>
 
         {highlight && (
+          <Button
+            variant={highlight.completedAt ? 'outline' : 'default'}
+            className="w-full mt-3"
+            onClick={handleToggleCompletion}
+          >
+            {highlight.completedAt ? 'Marcar como no completado' : 'Marcar como completado'}
+          </Button>
+        )}
+
+        {highlight && (
           <div className="flex gap-3 mt-4">
             <Button
               variant="outline"
@@ -117,3 +147,4 @@ const HighlightPage: React.FC = () => {
 };
 
 export default HighlightPage;
+

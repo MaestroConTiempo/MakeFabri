@@ -1,10 +1,10 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import WaveHeader from '@/components/WaveHeader';
 import { Button } from '@/components/ui/button';
-import { getHighlightsRange, markHighlightDone } from '@/lib/storage';
+import { getHighlightsRange, setHighlightCompletion, initializeCloudSync } from '@/lib/storage';
 import { format, subDays } from 'date-fns';
 import { getTodayDate } from '@/lib/dates';
-import { Check, CheckCircle } from 'lucide-react';
+import { Check, RotateCcw } from 'lucide-react';
 
 const FILTERS = [
   { label: '7 días', days: 7 },
@@ -20,8 +20,20 @@ const ReflectPage: React.FC = () => {
   const startDate = format(subDays(new Date(), days), 'yyyy-MM-dd');
   const highlights = getHighlightsRange(startDate, today);
 
-  const handleMarkDone = (id: string) => {
-    markHighlightDone(id);
+  useEffect(() => {
+    let disposed = false;
+
+    void initializeCloudSync(true).finally(() => {
+      if (!disposed) setRefresh(r => r + 1);
+    });
+
+    return () => {
+      disposed = true;
+    };
+  }, []);
+
+  const handleSetCompletion = (id: string, completed: boolean) => {
+    setHighlightCompletion(id, completed);
     setRefresh(r => r + 1);
   };
 
@@ -68,12 +80,20 @@ const ReflectPage: React.FC = () => {
                   </p>
                 </div>
                 {h.completedAt ? (
-                  <CheckCircle size={24} className="text-primary flex-shrink-0 mt-1" />
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => handleSetCompletion(h.id, false)}
+                    className="flex-shrink-0 gap-1"
+                  >
+                    <RotateCcw size={14} />
+                    No hecho
+                  </Button>
                 ) : (
                   <Button
                     variant="outline"
                     size="sm"
-                    onClick={() => handleMarkDone(h.id)}
+                    onClick={() => handleSetCompletion(h.id, true)}
                     className="flex-shrink-0 gap-1"
                   >
                     <Check size={14} />
