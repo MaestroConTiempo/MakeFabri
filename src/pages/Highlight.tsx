@@ -2,7 +2,7 @@ import React, { useState, useCallback, useEffect } from 'react';
 import WaveHeader from '@/components/WaveHeader';
 import HighlightModal from '@/components/HighlightModal';
 import { getHighlightByDate, upsertHighlight, updateHighlight, setHighlightCompletion, initializeCloudSync } from '@/lib/storage';
-import { getTomorrowDate, buildScheduledAt } from '@/lib/dates';
+import { getTomorrowDate, getTodayDate, buildScheduledAt } from '@/lib/dates';
 import { generateGoogleCalendarUrl, downloadICS } from '@/lib/calendar';
 import { syncHighlightToGoogleCalendar, hasGoogleCalendarClientId, getGoogleCalendarErrorMessage } from '@/lib/googleCalendar';
 import { Button } from '@/components/ui/button';
@@ -14,7 +14,9 @@ const HighlightPage: React.FC = () => {
   const [modalOpen, setModalOpen] = useState(false);
   const [, setRefresh] = useState(0);
 
+  const todayDate = getTodayDate();
   const tomorrowDate = getTomorrowDate();
+  const todayHighlight = getHighlightByDate(todayDate);
   const highlight = getHighlightByDate(tomorrowDate);
 
   useEffect(() => {
@@ -66,6 +68,36 @@ const HighlightPage: React.FC = () => {
     setRefresh(r => r + 1);
   };
 
+  const handleCompleteTodayHighlight = () => {
+    if (!todayHighlight) return;
+    setHighlightCompletion(todayHighlight.id, true);
+    toast.success('Highlight de hoy marcado como completado');
+    setRefresh(r => r + 1);
+  };
+
+  const handleCarryTodayToTomorrow = () => {
+    if (!todayHighlight) return;
+
+    const nextHighlight = upsertHighlight({
+      date: tomorrowDate,
+      taskId: todayHighlight.taskId,
+      title: todayHighlight.title,
+      scheduledAt: buildScheduledAt(tomorrowDate, format(new Date(todayHighlight.scheduledAt), 'HH:mm')),
+      durationMinutes: todayHighlight.durationMinutes,
+      remindBeforeMinutes: todayHighlight.remindBeforeMinutes,
+    });
+
+    if (todayHighlight.googleCalendarEventId || todayHighlight.googleCalendarEventLink) {
+      updateHighlight(nextHighlight.id, {
+        googleCalendarEventId: undefined,
+        googleCalendarEventLink: undefined,
+      });
+    }
+
+    toast.success('Highlight mantenido para mañana');
+    setRefresh(r => r + 1);
+  };
+
   return (
     <div className="min-h-screen pb-24 flex flex-col">
       <WaveHeader
@@ -74,10 +106,26 @@ const HighlightPage: React.FC = () => {
       />
 
       <div className="px-6 pt-8 pb-4 animate-fade-in flex-1 flex flex-col justify-center">
+        {todayHighlight && !todayHighlight.completedAt && (
+          <div className="highlight-banner mb-4">
+            <p className="text-sm">
+              Tienes un highlight pendiente de hoy: <strong>{todayHighlight.title}</strong>
+            </p>
+            <div className="flex gap-2 mt-3">
+              <Button size="sm" className="flex-1" onClick={handleCompleteTodayHighlight}>
+                Marcar completado
+              </Button>
+              <Button size="sm" variant="outline" className="flex-1" onClick={handleCarryTodayToTomorrow}>
+                Mantener para mañana
+              </Button>
+            </div>
+          </div>
+        )}
+
         {highlight ? (
           <div className="post-it mb-6">
             <p className="text-xs font-medium opacity-60 mb-2">
-              Mañana a las {format(new Date(highlight.scheduledAt), 'HH:mm')}
+              Mañana ({format(new Date(`${highlight.date}T00:00:00`), 'EEE d MMM')}) a las {format(new Date(highlight.scheduledAt), 'HH:mm')}
               {' · '}
               {highlight.durationMinutes} min
             </p>
@@ -148,4 +196,3 @@ const HighlightPage: React.FC = () => {
 };
 
 export default HighlightPage;
-

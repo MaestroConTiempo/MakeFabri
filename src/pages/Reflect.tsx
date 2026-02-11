@@ -1,24 +1,16 @@
 import React, { useState, useEffect } from 'react';
 import WaveHeader from '@/components/WaveHeader';
 import { Button } from '@/components/ui/button';
-import { getHighlightsRange, setHighlightCompletion, initializeCloudSync } from '@/lib/storage';
-import { format, subDays } from 'date-fns';
+import { getHighlights, setHighlightCompletion, initializeCloudSync } from '@/lib/storage';
+import { format } from 'date-fns';
 import { getTodayDate } from '@/lib/dates';
 import { Check, RotateCcw } from 'lucide-react';
 
-const FILTERS = [
-  { label: '7 días', days: 7 },
-  { label: '14 días', days: 14 },
-  { label: '30 días', days: 30 },
-];
-
 const ReflectPage: React.FC = () => {
-  const [days, setDays] = useState(14);
   const [refresh, setRefresh] = useState(0);
 
   const today = getTodayDate();
-  const startDate = format(subDays(new Date(), days), 'yyyy-MM-dd');
-  const highlights = getHighlightsRange(startDate, today);
+  const highlights = getHighlights().filter(h => h.date <= today);
 
   useEffect(() => {
     let disposed = false;
@@ -42,19 +34,9 @@ const ReflectPage: React.FC = () => {
       <WaveHeader title="Historial" subtitle="Revisa tus highlights" />
 
       <div className="px-6 pt-4 animate-fade-in">
-        <div className="flex gap-2 mb-6">
-          {FILTERS.map(f => (
-            <Button
-              key={f.days}
-              variant={days === f.days ? 'default' : 'outline'}
-              size="sm"
-              onClick={() => setDays(f.days)}
-              className={days === f.days ? 'bg-primary' : ''}
-            >
-              {f.label}
-            </Button>
-          ))}
-        </div>
+        <p className="text-sm text-muted-foreground mb-6">
+          Se muestran todos los highlights pasados (completados o pendientes).
+        </p>
 
         {highlights.length === 0 ? (
           <div className="text-center py-12">
