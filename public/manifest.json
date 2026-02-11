@@ -1,0 +1,15 @@
+{
+  "name": "Highlight & Fogons",
+  "short_name": "Highlight",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#FFFFFF",
+  "theme_color": "#9AE9F0",
+  "icons": [
+    {
+      "src": "/favicon.ico",
+      "sizes": "64x64",
+      "type": "image/x-icon"
+    }
+  ]
+}
