@@ -75,7 +75,7 @@ const HighlightPage: React.FC = () => {
 
       <div className="px-6 pt-8 pb-4 animate-fade-in flex-1 flex flex-col justify-center">
         {highlight ? (
-          <div className="post-it mb-6">
+          <div className="post-it mb-6 w-full md:w-1/2 md:mx-auto">
             <p className="text-xs font-medium opacity-60 mb-2">
               Mañana a las {format(new Date(highlight.scheduledAt), 'HH:mm')}
               {' · '}
@@ -91,7 +91,7 @@ const HighlightPage: React.FC = () => {
             )}
           </div>
         ) : (
-          <div className="post-it-placeholder mb-6 flex items-center justify-center min-h-[120px]">
+          <div className="post-it-placeholder mb-6 flex items-center justify-center min-h-[120px] w-full md:w-1/2 md:mx-auto">
             <p className="text-lg font-display opacity-40">
               Elige el Highlight de mañana
             </p>
@@ -100,7 +100,7 @@ const HighlightPage: React.FC = () => {
 
         <Button
           onClick={() => setModalOpen(true)}
-          className="w-full bg-secondary text-secondary-foreground font-semibold text-base py-6 hover:opacity-90"
+          className="w-full md:w-1/2 md:mx-auto bg-secondary text-secondary-foreground font-semibold text-base py-6 hover:opacity-90"
         >
           {highlight ? "Cambiar Highlight" : "Establecer Highlight de mañana"}
         </Button>
@@ -108,7 +108,7 @@ const HighlightPage: React.FC = () => {
         {highlight && (
           <Button
             variant={highlight.completedAt ? 'outline' : 'default'}
-            className="w-full mt-3"
+            className="w-full md:w-1/2 md:mx-auto mt-3"
             onClick={handleToggleCompletion}
           >
             {highlight.completedAt ? 'Marcar como no completado' : 'Marcar como completado'}
