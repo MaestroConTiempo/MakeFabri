@@ -24,7 +24,7 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import { Checkbox } from '@/components/ui/checkbox';
-import { Plus, MoreHorizontal, Star, Pencil } from 'lucide-react';
+import { Plus, MoreHorizontal, Star, Pencil, Check, X } from 'lucide-react';
 import { format } from 'date-fns';
 import { toast } from 'sonner';
 
@@ -34,6 +34,8 @@ const FogonsPage: React.FC = () => {
   const [refresh, setRefresh] = useState(0);
   const [addingTo, setAddingTo] = useState<Bucket | null>(null);
   const [newTitle, setNewTitle] = useState('');
+  const [editingTaskId, setEditingTaskId] = useState<string | null>(null);
+  const [editingTitle, setEditingTitle] = useState('');
   const [highlightModal, setHighlightModal] = useState<{ open: boolean; task?: Task }>({ open: false });
 
   const tomorrowDate = getTomorrowDate();
@@ -64,6 +66,29 @@ const FogonsPage: React.FC = () => {
   const toggleTaskStatus = (task: Task) => {
     const newStatus = task.status === 'done' ? 'todo' : 'done';
     updateTask(task.id, { status: newStatus });
+    doRefresh();
+  };
+
+  const startEditingTask = (task: Task) => {
+    setEditingTaskId(task.id);
+    setEditingTitle(task.title);
+    setAddingTo(null);
+  };
+
+  const cancelEditingTask = () => {
+    setEditingTaskId(null);
+    setEditingTitle('');
+  };
+
+  const saveEditingTask = (task: Task) => {
+    const trimmedTitle = editingTitle.trim();
+    if (!trimmedTitle) {
+      toast.error('El título no puede estar vacío');
+      return;
+    }
+
+    updateTask(task.id, { title: trimmedTitle });
+    cancelEditingTask();
     doRefresh();
   };
 
@@ -145,10 +170,44 @@ const FogonsPage: React.FC = () => {
                 checked={task.status === 'done'}
                 onCheckedChange={() => toggleTaskStatus(task)}
                 className="h-4 w-4"
+                disabled={editingTaskId === task.id}
               />
-              <span className={`flex-1 text-sm leading-snug ${task.status === 'done' ? 'line-through text-muted-foreground' : ''}`}>
-                {task.title}
-              </span>
+              {editingTaskId === task.id ? (
+                <div className="flex-1 flex items-center gap-2">
+                  <Input
+                    value={editingTitle}
+                    onChange={e => setEditingTitle(e.target.value)}
+                    onKeyDown={e => {
+                      if (e.key === 'Enter') saveEditingTask(task);
+                      if (e.key === 'Escape') cancelEditingTask();
+                    }}
+                    autoFocus
+                    className="h-8 text-sm"
+                  />
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon"
+                    className="h-8 w-8"
+                    onClick={() => saveEditingTask(task)}
+                  >
+                    <Check size={16} />
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon"
+                    className="h-8 w-8"
+                    onClick={cancelEditingTask}
+                  >
+                    <X size={16} />
+                  </Button>
+                </div>
+              ) : (
+                <span className={`flex-1 text-sm leading-snug ${task.status === 'done' ? 'line-through text-muted-foreground' : ''}`}>
+                  {task.title}
+                </span>
+              )}
               <button
                 onClick={() => setHighlightModal({ open: true, task })}
                 className="text-mt-yellow hover:scale-110 transition-transform flex-shrink-0 opacity-0 group-hover:opacity-100"
@@ -163,6 +222,9 @@ const FogonsPage: React.FC = () => {
                   </button>
                 </DropdownMenuTrigger>
                 <DropdownMenuContent align="end">
+                  <DropdownMenuItem onClick={() => startEditingTask(task)}>
+                    Editar
+                  </DropdownMenuItem>
                   <DropdownMenuItem onClick={() => { archiveTask(task.id); doRefresh(); }}>
                     Archivar
                   </DropdownMenuItem>
