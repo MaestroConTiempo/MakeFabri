@@ -37,7 +37,11 @@ const HighlightPage: React.FC = () => {
   const [, setRefresh] = useState(0);
 
   const todayDate = getTodayDate();
-  const highlight = getHighlightByDate(todayDate);
+  const tomorrowDate = getTomorrowDate();
+  const todayHighlight = getHighlightByDate(todayDate);
+  const tomorrowHighlight = getHighlightByDate(tomorrowDate);
+  const highlight = todayHighlight ?? tomorrowHighlight;
+  const isTodayHighlight = Boolean(todayHighlight && highlight?.id === todayHighlight.id);
   const highlightReviewed = highlight ? isHighlightReviewed(highlight.id) : false;
 
   useEffect(() => {
@@ -82,7 +86,7 @@ const HighlightPage: React.FC = () => {
   );
 
   const handleToggleCompletion = () => {
-    if (!highlight) return;
+    if (!highlight || !isTodayHighlight) return;
     const completed = !highlight.completedAt;
     setHighlightCompletion(highlight.id, completed);
     if (completed) markHighlightReviewed(highlight.id);
@@ -91,13 +95,13 @@ const HighlightPage: React.FC = () => {
   };
 
   const openReviewDialog = () => {
-    if (!highlight) return;
+    if (!highlight || !isTodayHighlight) return;
     setReviewStep('done-question');
     setReviewOpen(true);
   };
 
   const handleDoneYes = () => {
-    if (!highlight) return;
+    if (!highlight || !isTodayHighlight) return;
     setHighlightCompletion(highlight.id, true);
     markHighlightReviewed(highlight.id);
     toast.success('Perfecto. Se marco como realizado y quedo en el historial.');
@@ -110,8 +114,7 @@ const HighlightPage: React.FC = () => {
   };
 
   const handleKeepForTomorrow = () => {
-    if (!highlight) return;
-    const tomorrowDate = getTomorrowDate();
+    if (!highlight || !isTodayHighlight) return;
     const localTime = format(new Date(highlight.scheduledAt), 'HH:mm');
 
     updateHighlight(highlight.id, {
@@ -125,7 +128,7 @@ const HighlightPage: React.FC = () => {
   };
 
   const handleSendToHistoryNotDone = () => {
-    if (!highlight) return;
+    if (!highlight || !isTodayHighlight) return;
     markHighlightReviewed(highlight.id);
     toast.success('Se envio al historial como no realizado.');
     setReviewOpen(false);
@@ -138,18 +141,27 @@ const HighlightPage: React.FC = () => {
 
       <div className="w-full max-w-md mx-auto px-6 pt-8 pb-4 animate-fade-in flex-1 flex flex-col justify-center">
         {highlight ? (
-          <button type="button" className="post-it mb-6 text-left w-full" onClick={openReviewDialog}>
+          <button
+            type="button"
+            className="post-it mb-6 text-left w-full"
+            onClick={openReviewDialog}
+            disabled={!isTodayHighlight}
+          >
             <p className="text-xs font-medium opacity-60 mb-2">
-              Hoy a las {format(new Date(highlight.scheduledAt), 'HH:mm')} {' · '} {highlight.durationMinutes} min
+              {isTodayHighlight ? 'Hoy' : 'Manana'} a las {format(new Date(highlight.scheduledAt), 'HH:mm')} {' · '} {highlight.durationMinutes} min
             </p>
             <p className="text-2xl font-bold font-display leading-tight">{highlight.title}</p>
-            {highlight.completedAt ? (
+            {highlight.completedAt && isTodayHighlight ? (
               <span className="inline-block mt-3 text-xs font-semibold bg-foreground/10 rounded-full px-3 py-1">
                 Completado
               </span>
-            ) : highlightReviewed ? (
+            ) : highlightReviewed && isTodayHighlight ? (
               <span className="inline-block mt-3 text-xs font-semibold bg-foreground/10 rounded-full px-3 py-1">
                 Revisado (no hecho)
+              </span>
+            ) : !isTodayHighlight ? (
+              <span className="inline-block mt-3 text-xs font-semibold bg-foreground/10 rounded-full px-3 py-1">
+                Pendiente para manana
               </span>
             ) : null}
           </button>
@@ -166,7 +178,7 @@ const HighlightPage: React.FC = () => {
           {highlight ? 'Cambiar Highlight' : 'Establecer Highlight de hoy'}
         </Button>
 
-        {highlight && (
+        {highlight && isTodayHighlight && (
           <Button
             variant={highlight.completedAt ? 'outline' : 'default'}
             className="w-full mt-3"
@@ -198,7 +210,7 @@ const HighlightPage: React.FC = () => {
         open={modalOpen}
         onClose={() => setModalOpen(false)}
         onSave={handleSave}
-        initialDate={todayDate}
+        initialDate={highlight?.date ?? todayDate}
         willReplaceExisting
       />
 
