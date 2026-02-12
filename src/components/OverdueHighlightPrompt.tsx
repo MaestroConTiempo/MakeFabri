@@ -10,26 +10,9 @@ import { Button } from '@/components/ui/button';
 import { buildScheduledAt, getTomorrowDate } from '@/lib/dates';
 import { getHighlights, setHighlightCompletion, updateHighlight } from '@/lib/storage';
 import { DailyHighlight } from '@/lib/types';
+import { getReviewedHighlightIds, markHighlightReviewed } from '@/lib/highlightReview';
 import { format } from 'date-fns';
 import { toast } from 'sonner';
-
-const REVIEWED_OVERDUE_KEY = 'mt_overdue_reviewed_highlights';
-
-function readReviewedIds(): Set<string> {
-  const raw = localStorage.getItem(REVIEWED_OVERDUE_KEY);
-  if (!raw) return new Set();
-
-  try {
-    const parsed = JSON.parse(raw) as string[];
-    return new Set(Array.isArray(parsed) ? parsed : []);
-  } catch {
-    return new Set();
-  }
-}
-
-function writeReviewedIds(ids: Set<string>) {
-  localStorage.setItem(REVIEWED_OVERDUE_KEY, JSON.stringify(Array.from(ids)));
-}
 
 type Step = 'done-question' | 'keep-question';
 
@@ -39,7 +22,7 @@ const OverdueHighlightPrompt: React.FC = () => {
 
   const overdueHighlight = (() => {
     const now = Date.now();
-    const reviewed = readReviewedIds();
+    const reviewed = getReviewedHighlightIds();
 
     return getHighlights()
       .filter(h => !h.completedAt)
@@ -50,12 +33,6 @@ const OverdueHighlightPrompt: React.FC = () => {
 
   const open = Boolean(overdueHighlight);
 
-  const markReviewed = useCallback((id: string) => {
-    const reviewed = readReviewedIds();
-    reviewed.add(id);
-    writeReviewedIds(reviewed);
-  }, []);
-
   const closePrompt = useCallback(() => {
     setStep('done-question');
     setRefresh(r => r + 1);
@@ -63,10 +40,10 @@ const OverdueHighlightPrompt: React.FC = () => {
 
   const handleDoneYes = useCallback((highlight: DailyHighlight) => {
     setHighlightCompletion(highlight.id, true);
-    markReviewed(highlight.id);
+    markHighlightReviewed(highlight.id);
     toast.success('Perfecto. Se marco como realizado y quedo en el historial.');
     closePrompt();
-  }, [closePrompt, markReviewed]);
+  }, [closePrompt]);
 
   const handleDoneNo = useCallback(() => {
     setStep('keep-question');
@@ -86,10 +63,10 @@ const OverdueHighlightPrompt: React.FC = () => {
   }, [closePrompt]);
 
   const handleSendToHistoryNotDone = useCallback((highlight: DailyHighlight) => {
-    markReviewed(highlight.id);
+    markHighlightReviewed(highlight.id);
     toast.success('Se envio al historial como no realizado.');
     closePrompt();
-  }, [closePrompt, markReviewed]);
+  }, [closePrompt]);
 
   useEffect(() => {
     const timer = window.setInterval(() => {

@@ -14,8 +14,8 @@ const queryClient = new QueryClient();
 
 const AppShell = () => {
   const location = useLocation();
-  const isFogonsRoute = location.pathname === "/fogons";
-  const contentWidthClass = isFogonsRoute
+  const isWideRoute = location.pathname === "/fogons" || location.pathname === "/";
+  const contentWidthClass = isWideRoute
     ? "max-w-md md:max-w-4xl lg:max-w-5xl"
     : "max-w-md";
 

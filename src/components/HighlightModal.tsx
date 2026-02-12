@@ -25,6 +25,7 @@ interface HighlightModalProps {
   }) => void | Promise<void>;
   initialTitle?: string;
   initialTaskId?: string;
+  initialDate?: string;
   willReplaceExisting?: boolean;
 }
 
@@ -37,10 +38,11 @@ const HighlightModal: React.FC<HighlightModalProps> = ({
   onSave,
   initialTitle = '',
   initialTaskId,
+  initialDate = getTomorrowDate(),
   willReplaceExisting = true,
 }) => {
   const settings = getSettings();
-  const [date, setDate] = useState(getTomorrowDate());
+  const [date, setDate] = useState(initialDate);
   const [title, setTitle] = useState(initialTitle);
   const [time, setTime] = useState(settings.defaultPlanHour);
   const [duration, setDuration] = useState(settings.defaultDurationMinutes);
@@ -79,7 +81,7 @@ const HighlightModal: React.FC<HighlightModalProps> = ({
   React.useEffect(() => {
     if (!open) return;
 
-    setDate(getTomorrowDate());
+    setDate(initialDate);
     setTitle(initialTitle);
     setTaskId(initialTaskId);
     setTime(settings.defaultPlanHour);
@@ -89,6 +91,7 @@ const HighlightModal: React.FC<HighlightModalProps> = ({
     setSaving(false);
   }, [
     initialTaskId,
+    initialDate,
     initialTitle,
     open,
     settings.defaultDurationMinutes,

@@ -181,7 +181,28 @@ function fromHighlightRow(row: HighlightRow): DailyHighlight {
 }
 
 function normalizeHighlights(highlights: DailyHighlight[]): DailyHighlight[] {
-  return [...highlights].sort((a, b) => {
+  const byDate = new Map<string, DailyHighlight>();
+
+  for (const highlight of highlights) {
+    const current = byDate.get(highlight.date);
+    if (!current) {
+      byDate.set(highlight.date, highlight);
+      continue;
+    }
+
+    const currentUpdated = Date.parse(current.updatedAt);
+    const nextUpdated = Date.parse(highlight.updatedAt);
+    if (nextUpdated > currentUpdated) {
+      byDate.set(highlight.date, highlight);
+      continue;
+    }
+
+    if (nextUpdated === currentUpdated && highlight.createdAt > current.createdAt) {
+      byDate.set(highlight.date, highlight);
+    }
+  }
+
+  return [...byDate.values()].sort((a, b) => {
     if (a.date !== b.date) return b.date.localeCompare(a.date);
 
     const aUpdated = Date.parse(a.updatedAt);
@@ -493,8 +514,7 @@ export function saveHighlights(highlights: DailyHighlight[]) {
 }
 
 export function getHighlightByDate(date: string): DailyHighlight | undefined {
-  const highlightsForDate = getHighlights().filter(h => h.date === date);
-  return highlightsForDate[0];
+  return getHighlights().find(h => h.date === date);
 }
 
 export function getHighlightsRange(startDate: string, endDate: string): DailyHighlight[] {
@@ -530,19 +550,7 @@ export function upsertHighlight(data: Omit<DailyHighlight, 'id' | 'createdAt' | 
 }
 
 export function createHighlight(data: Omit<DailyHighlight, 'id' | 'createdAt' | 'updatedAt'>): DailyHighlight {
-  const highlights = getHighlights();
-  const now = new Date().toISOString();
-
-  const highlight: DailyHighlight = {
-    ...data,
-    id: uuid(),
-    createdAt: now,
-    updatedAt: now,
-  };
-
-  highlights.push(highlight);
-  saveHighlights(highlights);
-  return highlight;
+  return upsertHighlight(data);
 }
 
 export function markHighlightDone(id: string) {

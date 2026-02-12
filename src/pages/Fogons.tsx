@@ -10,7 +10,7 @@ import {
   archiveTask,
   deleteTask,
   getHighlightByDate,
-  createHighlight,
+  upsertHighlight,
   updateHighlight,
   initializeCloudSync,
 } from '@/lib/storage';
@@ -54,7 +54,11 @@ const FogonsPage: React.FC = () => {
   }, []);
 
   const handleAddTask = (bucket: Bucket) => {
-    if (!newTitle.trim()) return;
+    if (!newTitle.trim()) {
+      setAddingTo(null);
+      setNewTitle('');
+      return;
+    }
     createTask(newTitle.trim(), bucket);
     setNewTitle('');
     setAddingTo(null);
@@ -69,7 +73,7 @@ const FogonsPage: React.FC = () => {
 
   const handleHighlightSave = useCallback(
     async (data: { date: string; title: string; time: string; durationMinutes: number; remindBeforeMinutes: number; taskId?: string }) => {
-      const savedHighlight = createHighlight({
+      const savedHighlight = upsertHighlight({
         date: data.date,
         taskId: data.taskId,
         title: data.title,
@@ -235,7 +239,7 @@ const FogonsPage: React.FC = () => {
         onSave={handleHighlightSave}
         initialTitle={highlightModal.task?.title}
         initialTaskId={highlightModal.task?.id}
-        willReplaceExisting={false}
+        willReplaceExisting
       />
     </div>
   );

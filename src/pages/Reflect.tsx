@@ -7,6 +7,7 @@ import {
   initializeCloudSync,
   setHighlightCompletion,
 } from '@/lib/storage';
+import { getReviewedHighlightIds, unmarkHighlightReviewed } from '@/lib/highlightReview';
 import { format, subDays } from 'date-fns';
 import { getTodayDate } from '@/lib/dates';
 import { Check, RotateCcw, Trash2 } from 'lucide-react';
@@ -17,20 +18,6 @@ const FILTERS = [
   { label: '14 dias', days: 14 },
   { label: '30 dias', days: 30 },
 ];
-const REVIEWED_OVERDUE_KEY = 'mt_overdue_reviewed_highlights';
-
-function getReviewedOverdueIds(): Set<string> {
-  const raw = localStorage.getItem(REVIEWED_OVERDUE_KEY);
-  if (!raw) return new Set();
-
-  try {
-    const parsed = JSON.parse(raw) as string[];
-    return new Set(Array.isArray(parsed) ? parsed : []);
-  } catch {
-    return new Set();
-  }
-}
-
 const ReflectPage: React.FC = () => {
   const [days, setDays] = useState(14);
   const [refresh, setRefresh] = useState(0);
@@ -38,12 +25,8 @@ const ReflectPage: React.FC = () => {
   const today = getTodayDate();
   const startDate = format(subDays(new Date(), days), 'yyyy-MM-dd');
   const highlights = getHighlightsRange(startDate, today);
-  const reviewedOverdue = getReviewedOverdueIds();
-  const visibleHighlights = highlights.filter(h => {
-    const isOverduePending = !h.completedAt && Date.parse(h.scheduledAt) <= Date.now();
-    if (!isOverduePending) return true;
-    return reviewedOverdue.has(h.id);
-  });
+  const reviewedHighlightIds = getReviewedHighlightIds();
+  const visibleHighlights = highlights.filter(h => reviewedHighlightIds.has(h.id));
 
   useEffect(() => {
     let disposed = false;
@@ -72,7 +55,8 @@ const ReflectPage: React.FC = () => {
       return;
     }
 
-    toast.success('Highlight eliminado.');
+    unmarkHighlightReviewed(id);
+    toast.success('Highlight eliminado.', { duration: 1800 });
     setRefresh(r => r + 1);
   };
 
