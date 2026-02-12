@@ -40,8 +40,10 @@ const HighlightPage: React.FC = () => {
   const tomorrowDate = getTomorrowDate();
   const todayHighlight = getHighlightByDate(todayDate);
   const tomorrowHighlight = getHighlightByDate(tomorrowDate);
-  const highlight = todayHighlight ?? tomorrowHighlight;
-  const isTodayHighlight = Boolean(todayHighlight && highlight?.id === todayHighlight.id);
+  const todayHighlightReviewed = todayHighlight ? isHighlightReviewed(todayHighlight.id) : false;
+  const isTodayPending = Boolean(todayHighlight && !todayHighlight.completedAt && !todayHighlightReviewed);
+  const highlight = isTodayPending ? todayHighlight : tomorrowHighlight;
+  const isTodayHighlight = Boolean(isTodayPending && highlight?.id === todayHighlight?.id);
   const highlightReviewed = highlight ? isHighlightReviewed(highlight.id) : false;
 
   useEffect(() => {
