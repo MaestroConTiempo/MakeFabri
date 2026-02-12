@@ -368,6 +368,22 @@ async function deleteTaskFromCloud(userId: string, id: string) {
   if (error) throw error;
 }
 
+async function deleteHighlightFromCloud(userId: string, id: string) {
+  if (!supabase) return;
+
+  let query = supabase
+    .from(TABLES.highlights)
+    .delete()
+    .eq('id', id);
+
+  if (!sharedHighlightsMode) {
+    query = query.eq('user_id', userId);
+  }
+
+  const { error } = await query;
+  if (error) throw error;
+}
+
 async function removeAllFromCloud(userId: string) {
   if (!supabase) return;
 
@@ -554,6 +570,23 @@ export function updateHighlight(id: string, updates: Partial<DailyHighlight>): D
   highlights[idx] = { ...highlights[idx], ...updates, updatedAt: new Date().toISOString() };
   saveHighlights(highlights);
   return highlights[idx];
+}
+
+export function deleteHighlight(id: string): boolean {
+  const highlights = getHighlights();
+  const idx = highlights.findIndex(h => h.id === id);
+  if (idx === -1) return false;
+
+  highlights.splice(idx, 1);
+  saveHighlights(highlights);
+
+  enqueueCloudWrite(async () => {
+    const userId = await ensureCloudUserId();
+    if (!userId) return;
+    await deleteHighlightFromCloud(userId, id);
+  });
+
+  return true;
 }
 
 // Settings

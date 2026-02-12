@@ -68,12 +68,12 @@ const FogonsPage: React.FC = () => {
   };
 
   const handleHighlightSave = useCallback(
-    async (data: { title: string; time: string; durationMinutes: number; remindBeforeMinutes: number; taskId?: string }) => {
+    async (data: { date: string; title: string; time: string; durationMinutes: number; remindBeforeMinutes: number; taskId?: string }) => {
       const savedHighlight = createHighlight({
-        date: tomorrowDate,
+        date: data.date,
         taskId: data.taskId,
         title: data.title,
-        scheduledAt: buildScheduledAt(tomorrowDate, data.time),
+        scheduledAt: buildScheduledAt(data.date, data.time),
         durationMinutes: data.durationMinutes,
         remindBeforeMinutes: data.remindBeforeMinutes,
       });
@@ -93,7 +93,7 @@ const FogonsPage: React.FC = () => {
 
       doRefresh();
     },
-    [tomorrowDate]
+    []
   );
   const renderBucket = (bucket: Bucket) => {
     const tasks = getTasksByBucket(bucket);

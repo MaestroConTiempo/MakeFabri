@@ -8,6 +8,7 @@ import FogonsPage from "@/pages/Fogons";
 import ReflectPage from "@/pages/Reflect";
 import SettingsPage from "@/pages/Settings";
 import NotFound from "@/pages/NotFound";
+import OverdueHighlightPrompt from "@/components/OverdueHighlightPrompt";
 
 const queryClient = new QueryClient();
 
@@ -27,6 +28,7 @@ const AppShell = () => {
         <Route path="/settings" element={<SettingsPage />} />
         <Route path="*" element={<NotFound />} />
       </Routes>
+      <OverdueHighlightPrompt />
       <TabBar contentWidthClass={contentWidthClass} />
     </div>
   );

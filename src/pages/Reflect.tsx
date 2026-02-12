@@ -1,16 +1,35 @@
-import React, { useState, useEffect } from 'react';
+import React, { useEffect, useState } from 'react';
 import WaveHeader from '@/components/WaveHeader';
 import { Button } from '@/components/ui/button';
-import { getHighlightsRange, setHighlightCompletion, initializeCloudSync } from '@/lib/storage';
+import {
+  deleteHighlight,
+  getHighlightsRange,
+  initializeCloudSync,
+  setHighlightCompletion,
+} from '@/lib/storage';
 import { format, subDays } from 'date-fns';
 import { getTodayDate } from '@/lib/dates';
-import { Check, RotateCcw } from 'lucide-react';
+import { Check, RotateCcw, Trash2 } from 'lucide-react';
+import { toast } from 'sonner';
 
 const FILTERS = [
-  { label: '7 días', days: 7 },
-  { label: '14 días', days: 14 },
-  { label: '30 días', days: 30 },
+  { label: '7 dias', days: 7 },
+  { label: '14 dias', days: 14 },
+  { label: '30 dias', days: 30 },
 ];
+const REVIEWED_OVERDUE_KEY = 'mt_overdue_reviewed_highlights';
+
+function getReviewedOverdueIds(): Set<string> {
+  const raw = localStorage.getItem(REVIEWED_OVERDUE_KEY);
+  if (!raw) return new Set();
+
+  try {
+    const parsed = JSON.parse(raw) as string[];
+    return new Set(Array.isArray(parsed) ? parsed : []);
+  } catch {
+    return new Set();
+  }
+}
 
 const ReflectPage: React.FC = () => {
   const [days, setDays] = useState(14);
@@ -19,6 +38,12 @@ const ReflectPage: React.FC = () => {
   const today = getTodayDate();
   const startDate = format(subDays(new Date(), days), 'yyyy-MM-dd');
   const highlights = getHighlightsRange(startDate, today);
+  const reviewedOverdue = getReviewedOverdueIds();
+  const visibleHighlights = highlights.filter(h => {
+    const isOverduePending = !h.completedAt && Date.parse(h.scheduledAt) <= Date.now();
+    if (!isOverduePending) return true;
+    return reviewedOverdue.has(h.id);
+  });
 
   useEffect(() => {
     let disposed = false;
@@ -34,6 +59,20 @@ const ReflectPage: React.FC = () => {
 
   const handleSetCompletion = (id: string, completed: boolean) => {
     setHighlightCompletion(id, completed);
+    setRefresh(r => r + 1);
+  };
+
+  const handleDeleteHighlight = (id: string) => {
+    const confirmed = window.confirm('Eliminar este highlight del historial? Tambien se eliminara en Supabase.');
+    if (!confirmed) return;
+
+    const deleted = deleteHighlight(id);
+    if (!deleted) {
+      toast.error('No se pudo eliminar el highlight.');
+      return;
+    }
+
+    toast.success('Highlight eliminado.');
     setRefresh(r => r + 1);
   };
 
@@ -56,13 +95,13 @@ const ReflectPage: React.FC = () => {
           ))}
         </div>
 
-        {highlights.length === 0 ? (
+        {visibleHighlights.length === 0 ? (
           <div className="text-center py-12">
-            <p className="text-muted-foreground">Sin highlights en este período</p>
+            <p className="text-muted-foreground">Sin highlights en este periodo</p>
           </div>
         ) : (
           <div className="space-y-3">
-            {highlights.map(h => (
+            {visibleHighlights.map(h => (
               <div
                 key={h.id}
                 className={`bucket-section flex items-start gap-4 ${h.completedAt ? 'opacity-70' : ''}`}
@@ -70,36 +109,47 @@ const ReflectPage: React.FC = () => {
                 <div className="flex-1">
                   <p className="text-xs text-muted-foreground mb-1">
                     {format(new Date(h.date + 'T00:00:00'), 'EEE d MMM')}
-                    {' · '}
+                    {' - '}
                     {format(new Date(h.scheduledAt), 'HH:mm')}
-                    {' · '}
+                    {' - '}
                     {h.durationMinutes} min
                   </p>
                   <p className={`font-semibold font-display ${h.completedAt ? 'line-through' : ''}`}>
                     {h.title}
                   </p>
                 </div>
-                {h.completedAt ? (
+                <div className="flex-shrink-0 flex gap-2">
+                  {h.completedAt ? (
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => handleSetCompletion(h.id, false)}
+                      className="gap-1"
+                    >
+                      <RotateCcw size={14} />
+                      No hecho
+                    </Button>
+                  ) : (
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => handleSetCompletion(h.id, true)}
+                      className="gap-1"
+                    >
+                      <Check size={14} />
+                      Hecho
+                    </Button>
+                  )}
                   <Button
                     variant="outline"
                     size="sm"
-                    onClick={() => handleSetCompletion(h.id, false)}
-                    className="flex-shrink-0 gap-1"
+                    onClick={() => handleDeleteHighlight(h.id)}
+                    className="gap-1 text-destructive border-destructive/30 hover:bg-destructive/10"
                   >
-                    <RotateCcw size={14} />
-                    No hecho
+                    <Trash2 size={14} />
+                    Eliminar
                   </Button>
-                ) : (
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={() => handleSetCompletion(h.id, true)}
-                    className="flex-shrink-0 gap-1"
-                  >
-                    <Check size={14} />
-                    Hecho
-                  </Button>
-                )}
+                </div>
               </div>
             ))}
           </div>

@@ -16,6 +16,7 @@ interface HighlightModalProps {
   open: boolean;
   onClose: () => void;
   onSave: (data: {
+    date: string;
     title: string;
     time: string;
     durationMinutes: number;
@@ -39,6 +40,7 @@ const HighlightModal: React.FC<HighlightModalProps> = ({
   willReplaceExisting = true,
 }) => {
   const settings = getSettings();
+  const [date, setDate] = useState(getTomorrowDate());
   const [title, setTitle] = useState(initialTitle);
   const [time, setTime] = useState(settings.defaultPlanHour);
   const [duration, setDuration] = useState(settings.defaultDurationMinutes);
@@ -47,14 +49,21 @@ const HighlightModal: React.FC<HighlightModalProps> = ({
   const [saving, setSaving] = useState(false);
   const [taskId, setTaskId] = useState<string | undefined>(initialTaskId);
 
-  const existingHighlight = getHighlightByDate(getTomorrowDate());
+  const existingHighlight = getHighlightByDate(date);
   const tasks = getTasks().filter(t => t.status !== 'archived');
 
   const handleSave = async () => {
     if (!title.trim()) return;
     setSaving(true);
     try {
-      await onSave({ title: title.trim(), time, durationMinutes: duration, remindBeforeMinutes: reminder, taskId });
+      await onSave({
+        date,
+        title: title.trim(),
+        time,
+        durationMinutes: duration,
+        remindBeforeMinutes: reminder,
+        taskId,
+      });
       onClose();
     } finally {
       setSaving(false);
@@ -67,24 +76,31 @@ const HighlightModal: React.FC<HighlightModalProps> = ({
     setShowTasks(false);
   };
 
-  // Reset state when modal opens
   React.useEffect(() => {
-    if (open) {
-      setTitle(initialTitle);
-      setTaskId(initialTaskId);
-      setTime(settings.defaultPlanHour);
-      setDuration(settings.defaultDurationMinutes);
-      setReminder(settings.defaultRemindBeforeMinutes);
-      setShowTasks(false);
-      setSaving(false);
-    }
-  }, [open]);
+    if (!open) return;
+
+    setDate(getTomorrowDate());
+    setTitle(initialTitle);
+    setTaskId(initialTaskId);
+    setTime(settings.defaultPlanHour);
+    setDuration(settings.defaultDurationMinutes);
+    setReminder(settings.defaultRemindBeforeMinutes);
+    setShowTasks(false);
+    setSaving(false);
+  }, [
+    initialTaskId,
+    initialTitle,
+    open,
+    settings.defaultDurationMinutes,
+    settings.defaultPlanHour,
+    settings.defaultRemindBeforeMinutes,
+  ]);
 
   return (
     <Dialog open={open} onOpenChange={v => !v && onClose()}>
       <DialogContent className="max-w-sm mx-auto">
         <DialogHeader>
-          <DialogTitle className="font-display">Highlight de mañana</DialogTitle>
+          <DialogTitle className="font-display">Programar Highlight</DialogTitle>
         </DialogHeader>
 
         {existingHighlight && willReplaceExisting && (
@@ -102,11 +118,21 @@ const HighlightModal: React.FC<HighlightModalProps> = ({
         {!showTasks ? (
           <div className="space-y-4">
             <div>
-              <Label>Título</Label>
+              <Label>Fecha</Label>
+              <Input
+                type="date"
+                value={date}
+                onChange={e => setDate(e.target.value)}
+                className="mt-1"
+              />
+            </div>
+
+            <div>
+              <Label>Titulo</Label>
               <Input
                 value={title}
                 onChange={e => setTitle(e.target.value)}
-                placeholder="¿Qué es lo más importante mañana?"
+                placeholder="Cual es lo mas importante?"
                 className="mt-1"
               />
             </div>
@@ -122,7 +148,7 @@ const HighlightModal: React.FC<HighlightModalProps> = ({
             </div>
 
             <div>
-              <Label>Duración</Label>
+              <Label>Duracion</Label>
               <div className="flex gap-2 mt-1">
                 {DURATIONS.map(d => (
                   <Button
@@ -163,7 +189,7 @@ const HighlightModal: React.FC<HighlightModalProps> = ({
               onClick={() => setShowTasks(true)}
               className="w-full"
             >
-              📋 Elegir de una tarea existente
+              Elegir de una tarea existente
             </Button>
 
             <Button
@@ -177,7 +203,7 @@ const HighlightModal: React.FC<HighlightModalProps> = ({
         ) : (
           <div className="space-y-2 max-h-64 overflow-y-auto">
             <Button variant="ghost" size="sm" onClick={() => setShowTasks(false)}>
-              ← Volver
+              Volver
             </Button>
             {tasks.length === 0 ? (
               <p className="text-muted-foreground text-sm text-center py-4">No hay tareas</p>
@@ -200,4 +226,3 @@ const HighlightModal: React.FC<HighlightModalProps> = ({
 };
 
 export default HighlightModal;
-

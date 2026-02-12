@@ -30,12 +30,12 @@ const HighlightPage: React.FC = () => {
   }, []);
 
   const handleSave = useCallback(
-    async (data: { title: string; time: string; durationMinutes: number; remindBeforeMinutes: number; taskId?: string }) => {
+    async (data: { date: string; title: string; time: string; durationMinutes: number; remindBeforeMinutes: number; taskId?: string }) => {
       const savedHighlight = upsertHighlight({
-        date: tomorrowDate,
+        date: data.date,
         taskId: data.taskId,
         title: data.title,
-        scheduledAt: buildScheduledAt(tomorrowDate, data.time),
+        scheduledAt: buildScheduledAt(data.date, data.time),
         durationMinutes: data.durationMinutes,
         remindBeforeMinutes: data.remindBeforeMinutes,
       });
@@ -55,7 +55,7 @@ const HighlightPage: React.FC = () => {
 
       setRefresh(r => r + 1);
     },
-    [tomorrowDate]
+    []
   );
 
   const handleToggleCompletion = () => {
