@@ -62,7 +62,13 @@ const ReflectPage: React.FC = () => {
 
   return (
     <div className="min-h-screen pb-24">
-      <WaveHeader title="Historial" subtitle="Revisa tus highlights" />
+      <WaveHeader
+        title="Historial"
+        subtitle="Revisa tus highlights"
+        containerClassName="md:pb-16"
+        titleClassName="md:text-5xl"
+        subtitleClassName="md:text-base md:mt-2"
+      />
 
       <div className="px-6 pt-4 animate-fade-in">
         <div className="flex gap-2 mb-6">
@@ -70,9 +76,8 @@ const ReflectPage: React.FC = () => {
             <Button
               key={f.days}
               variant={days === f.days ? 'default' : 'outline'}
-              size="sm"
               onClick={() => setDays(f.days)}
-              className={days === f.days ? 'bg-primary' : ''}
+              className={`h-9 px-4 text-sm md:h-11 md:px-5 md:text-base ${days === f.days ? 'bg-primary' : ''}`}
             >
               {f.label}
             </Button>
@@ -106,31 +111,28 @@ const ReflectPage: React.FC = () => {
                   {h.completedAt ? (
                     <Button
                       variant="outline"
-                      size="sm"
                       onClick={() => handleSetCompletion(h.id, false)}
-                      className="gap-1"
+                      className="h-9 px-3 text-sm md:h-11 md:px-4 md:text-base gap-1"
                     >
-                      <RotateCcw size={14} />
+                      <RotateCcw className="h-4 w-4 md:h-5 md:w-5" />
                       No hecho
                     </Button>
                   ) : (
                     <Button
                       variant="outline"
-                      size="sm"
                       onClick={() => handleSetCompletion(h.id, true)}
-                      className="gap-1"
+                      className="h-9 px-3 text-sm md:h-11 md:px-4 md:text-base gap-1"
                     >
-                      <Check size={14} />
+                      <Check className="h-4 w-4 md:h-5 md:w-5" />
                       Hecho
                     </Button>
                   )}
                   <Button
                     variant="outline"
-                    size="sm"
                     onClick={() => handleDeleteHighlight(h.id)}
-                    className="gap-1 text-destructive border-destructive/30 hover:bg-destructive/10"
+                    className="h-9 px-3 text-sm md:h-11 md:px-4 md:text-base gap-1 text-destructive border-destructive/30 hover:bg-destructive/10"
                   >
-                    <Trash2 size={14} />
+                    <Trash2 className="h-4 w-4 md:h-5 md:w-5" />
                     Eliminar
                   </Button>
                 </div>

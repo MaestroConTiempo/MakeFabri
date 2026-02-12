@@ -1,17 +1,27 @@
 import React from 'react';
+import { cn } from '@/lib/utils';
 
 interface WaveHeaderProps {
   title: string;
   subtitle?: string;
+  containerClassName?: string;
+  titleClassName?: string;
+  subtitleClassName?: string;
 }
 
-const WaveHeader: React.FC<WaveHeaderProps> = ({ title, subtitle }) => {
+const WaveHeader: React.FC<WaveHeaderProps> = ({
+  title,
+  subtitle,
+  containerClassName,
+  titleClassName,
+  subtitleClassName,
+}) => {
   return (
-    <div className="wave-header relative pb-12">
+    <div className={cn('wave-header relative pb-12', containerClassName)}>
       <div className="px-6 pt-12 pb-4">
-        <h1 className="text-3xl font-bold font-display">{title}</h1>
+        <h1 className={cn('text-3xl font-bold font-display', titleClassName)}>{title}</h1>
         {subtitle && (
-          <p className="mt-1 text-sm opacity-80">{subtitle}</p>
+          <p className={cn('mt-1 text-sm opacity-80', subtitleClassName)}>{subtitle}</p>
         )}
       </div>
       <svg
