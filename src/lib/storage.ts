@@ -532,6 +532,7 @@ export function upsertHighlight(data: Omit<DailyHighlight, 'id' | 'createdAt' | 
     highlights[existing] = {
       ...highlights[existing],
       ...data,
+      completedAt: undefined,
       updatedAt: now,
     };
     saveHighlights(highlights);

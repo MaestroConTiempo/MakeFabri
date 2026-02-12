@@ -26,7 +26,7 @@ import {
   hasGoogleCalendarClientId,
   syncHighlightToGoogleCalendar,
 } from '@/lib/googleCalendar';
-import { isHighlightReviewed, markHighlightReviewed } from '@/lib/highlightReview';
+import { isHighlightReviewed, markHighlightReviewed, unmarkHighlightReviewed } from '@/lib/highlightReview';
 
 type ReviewStep = 'done-question' | 'keep-question';
 
@@ -68,6 +68,7 @@ const HighlightPage: React.FC = () => {
         durationMinutes: data.durationMinutes,
         remindBeforeMinutes: data.remindBeforeMinutes,
       });
+      unmarkHighlightReviewed(savedHighlight.id);
 
       if (hasGoogleCalendarClientId()) {
         try {

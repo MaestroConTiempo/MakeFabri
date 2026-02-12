@@ -16,6 +16,7 @@ import {
 } from '@/lib/storage';
 import { getTomorrowDate, buildScheduledAt } from '@/lib/dates';
 import { syncHighlightToGoogleCalendar, hasGoogleCalendarClientId, getGoogleCalendarErrorMessage } from '@/lib/googleCalendar';
+import { unmarkHighlightReviewed } from '@/lib/highlightReview';
 import { Bucket, BUCKET_LABELS, BUCKET_ICONS, Task } from '@/lib/types';
 import {
   DropdownMenu,
@@ -81,6 +82,7 @@ const FogonsPage: React.FC = () => {
         durationMinutes: data.durationMinutes,
         remindBeforeMinutes: data.remindBeforeMinutes,
       });
+      unmarkHighlightReviewed(savedHighlight.id);
 
       if (hasGoogleCalendarClientId()) {
         try {
