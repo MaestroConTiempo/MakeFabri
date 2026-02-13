@@ -8,7 +8,7 @@ import {
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { getSettings, getTasks, getHighlightByDate } from '@/lib/storage';
+import { getActiveHighlight, getSettings, getTasks } from '@/lib/storage';
 import { getTomorrowDate } from '@/lib/dates';
 import { Task } from '@/lib/types';
 
@@ -51,7 +51,7 @@ const HighlightModal: React.FC<HighlightModalProps> = ({
   const [saving, setSaving] = useState(false);
   const [taskId, setTaskId] = useState<string | undefined>(initialTaskId);
 
-  const existingHighlight = getHighlightByDate(date);
+  const existingHighlight = getActiveHighlight();
   const tasks = getTasks().filter(t => t.status !== 'archived');
 
   const handleSave = async () => {
@@ -108,13 +108,13 @@ const HighlightModal: React.FC<HighlightModalProps> = ({
 
         {existingHighlight && willReplaceExisting && (
           <div className="highlight-banner text-sm mb-2">
-            Esto reemplazara: <strong>{existingHighlight.title}</strong>
+            Se sobrescribira el highlight activo: <strong>{existingHighlight.title}</strong>
           </div>
         )}
 
         {existingHighlight && !willReplaceExisting && (
           <div className="highlight-banner text-sm mb-2">
-            Se creara un nuevo highlight y el actual quedara en el historial.
+            Solo puede existir un highlight activo. El actual sera reemplazado.
           </div>
         )}
 

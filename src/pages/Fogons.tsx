@@ -4,19 +4,18 @@ import HighlightModal from '@/components/HighlightModal';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import {
+  getActiveHighlight,
   getTasksByBucket,
   createTask,
   updateTask,
   archiveTask,
   deleteTask,
-  getHighlightByDate,
   upsertHighlight,
   updateHighlight,
   initializeCloudSync,
 } from '@/lib/storage';
 import { getTomorrowDate, buildScheduledAt } from '@/lib/dates';
 import { syncHighlightToGoogleCalendar, hasGoogleCalendarClientId, getGoogleCalendarErrorMessage } from '@/lib/googleCalendar';
-import { unmarkHighlightReviewed } from '@/lib/highlightReview';
 import { Bucket, BUCKET_LABELS, BUCKET_ICONS, Task } from '@/lib/types';
 import {
   DropdownMenu,
@@ -38,7 +37,8 @@ const FogonsPage: React.FC = () => {
   const [highlightModal, setHighlightModal] = useState<{ open: boolean; task?: Task }>({ open: false });
 
   const tomorrowDate = getTomorrowDate();
-  const tomorrowHighlight = getHighlightByDate(tomorrowDate);
+  const activeHighlight = getActiveHighlight();
+  const tomorrowHighlight = activeHighlight?.date === tomorrowDate ? activeHighlight : undefined;
 
   const doRefresh = () => setRefresh(r => r + 1);
 
@@ -74,6 +74,8 @@ const FogonsPage: React.FC = () => {
 
   const handleHighlightSave = useCallback(
     async (data: { date: string; title: string; time: string; durationMinutes: number; remindBeforeMinutes: number; taskId?: string }) => {
+      await initializeCloudSync(true);
+
       const savedHighlight = upsertHighlight({
         date: data.date,
         taskId: data.taskId,
@@ -82,7 +84,6 @@ const FogonsPage: React.FC = () => {
         durationMinutes: data.durationMinutes,
         remindBeforeMinutes: data.remindBeforeMinutes,
       });
-      unmarkHighlightReviewed(savedHighlight.id);
 
       if (hasGoogleCalendarClientId()) {
         try {
@@ -239,8 +240,9 @@ const FogonsPage: React.FC = () => {
         open={highlightModal.open}
         onClose={() => setHighlightModal({ open: false })}
         onSave={handleHighlightSave}
-        initialTitle={highlightModal.task?.title}
-        initialTaskId={highlightModal.task?.id}
+        initialTitle={highlightModal.task?.title ?? tomorrowHighlight?.title}
+        initialTaskId={highlightModal.task?.id ?? tomorrowHighlight?.taskId}
+        initialDate={tomorrowHighlight?.date ?? tomorrowDate}
         willReplaceExisting
       />
     </div>

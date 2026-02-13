@@ -13,8 +13,9 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import {
-  getHighlightByDate,
+  getActiveHighlight,
   initializeCloudSync,
+  markHighlightNotDone,
   setHighlightCompletion,
   updateHighlight,
   upsertHighlight,
@@ -26,7 +27,6 @@ import {
   hasGoogleCalendarClientId,
   syncHighlightToGoogleCalendar,
 } from '@/lib/googleCalendar';
-import { isHighlightReviewed, markHighlightReviewed, unmarkHighlightReviewed } from '@/lib/highlightReview';
 
 type ReviewStep = 'done-question' | 'keep-question';
 
@@ -38,28 +38,33 @@ const HighlightPage: React.FC = () => {
 
   const todayDate = getTodayDate();
   const tomorrowDate = getTomorrowDate();
-  const todayHighlight = getHighlightByDate(todayDate);
-  const tomorrowHighlight = getHighlightByDate(tomorrowDate);
-  const todayHighlightReviewed = todayHighlight ? isHighlightReviewed(todayHighlight.id) : false;
-  const isTodayPending = Boolean(todayHighlight && !todayHighlight.completedAt && !todayHighlightReviewed);
-  const highlight = isTodayPending ? todayHighlight : tomorrowHighlight;
-  const isTodayHighlight = Boolean(isTodayPending && highlight?.id === todayHighlight?.id);
-  const highlightReviewed = highlight ? isHighlightReviewed(highlight.id) : false;
+  const highlight = getActiveHighlight();
+  const isTodayHighlight = Boolean(highlight && highlight.date === todayDate);
+  const isTomorrowHighlight = Boolean(highlight && highlight.date === tomorrowDate);
 
   useEffect(() => {
     let disposed = false;
 
-    void initializeCloudSync(true).finally(() => {
+    const syncHighlights = async () => {
+      await initializeCloudSync(true);
       if (!disposed) setRefresh(r => r + 1);
-    });
+    };
+
+    void syncHighlights();
+    const syncInterval = window.setInterval(() => {
+      void syncHighlights();
+    }, 15000);
 
     return () => {
       disposed = true;
+      window.clearInterval(syncInterval);
     };
   }, []);
 
   const handleSave = useCallback(
     async (data: { date: string; title: string; time: string; durationMinutes: number; remindBeforeMinutes: number; taskId?: string }) => {
+      await initializeCloudSync(true);
+
       const savedHighlight = upsertHighlight({
         date: data.date,
         taskId: data.taskId,
@@ -68,7 +73,6 @@ const HighlightPage: React.FC = () => {
         durationMinutes: data.durationMinutes,
         remindBeforeMinutes: data.remindBeforeMinutes,
       });
-      unmarkHighlightReviewed(savedHighlight.id);
 
       if (hasGoogleCalendarClientId()) {
         try {
@@ -92,7 +96,6 @@ const HighlightPage: React.FC = () => {
     if (!highlight || !isTodayHighlight) return;
     const completed = !highlight.completedAt;
     setHighlightCompletion(highlight.id, completed);
-    if (completed) markHighlightReviewed(highlight.id);
     toast.success(completed ? 'Highlight marcado como completado' : 'Highlight marcado como no completado');
     setRefresh(r => r + 1);
   };
@@ -106,7 +109,6 @@ const HighlightPage: React.FC = () => {
   const handleDoneYes = () => {
     if (!highlight || !isTodayHighlight) return;
     setHighlightCompletion(highlight.id, true);
-    markHighlightReviewed(highlight.id);
     toast.success('Perfecto. Se marco como realizado y quedo en el historial.');
     setReviewOpen(false);
     setRefresh(r => r + 1);
@@ -123,6 +125,7 @@ const HighlightPage: React.FC = () => {
     updateHighlight(highlight.id, {
       date: tomorrowDate,
       scheduledAt: buildScheduledAt(tomorrowDate, localTime),
+      completedAt: undefined,
     });
 
     toast.success('Highlight mantenido. Se movio para manana.');
@@ -132,8 +135,8 @@ const HighlightPage: React.FC = () => {
 
   const handleSendToHistoryNotDone = () => {
     if (!highlight || !isTodayHighlight) return;
-    markHighlightReviewed(highlight.id);
-    toast.success('Se envio al historial como no realizado.');
+    markHighlightNotDone(highlight.id);
+    toast.success('Se envio al historial como no realizado y la tarea volvio a su fogon.');
     setReviewOpen(false);
     setRefresh(r => r + 1);
   };
@@ -151,22 +154,14 @@ const HighlightPage: React.FC = () => {
             disabled={!isTodayHighlight}
           >
             <p className="text-xs font-medium opacity-60 mb-2">
-              {isTodayHighlight ? 'Hoy' : 'Manana'} a las {format(new Date(highlight.scheduledAt), 'HH:mm')} {' · '} {highlight.durationMinutes} min
+              {isTodayHighlight ? 'Hoy' : 'Manana'} a las {format(new Date(highlight.scheduledAt), 'HH:mm')} {' - '} {highlight.durationMinutes} min
             </p>
             <p className="text-2xl font-bold font-display leading-tight">{highlight.title}</p>
-            {highlight.completedAt && isTodayHighlight ? (
-              <span className="inline-block mt-3 text-xs font-semibold bg-foreground/10 rounded-full px-3 py-1">
-                Completado
-              </span>
-            ) : highlightReviewed && isTodayHighlight ? (
-              <span className="inline-block mt-3 text-xs font-semibold bg-foreground/10 rounded-full px-3 py-1">
-                Revisado (no hecho)
-              </span>
-            ) : !isTodayHighlight ? (
+            {isTomorrowHighlight && (
               <span className="inline-block mt-3 text-xs font-semibold bg-foreground/10 rounded-full px-3 py-1">
                 Pendiente para manana
               </span>
-            ) : null}
+            )}
           </button>
         ) : (
           <div className="post-it-placeholder mb-6 flex items-center justify-center min-h-[120px]">
@@ -178,7 +173,7 @@ const HighlightPage: React.FC = () => {
           onClick={() => setModalOpen(true)}
           className="w-full bg-secondary text-secondary-foreground font-semibold text-base py-6 hover:opacity-90"
         >
-          {highlight ? 'Cambiar Highlight' : 'Establecer Highlight de hoy'}
+          {highlight ? 'Cambiar Highlight activo' : 'Establecer Highlight'}
         </Button>
 
         {highlight && isTodayHighlight && (
@@ -213,6 +208,8 @@ const HighlightPage: React.FC = () => {
         open={modalOpen}
         onClose={() => setModalOpen(false)}
         onSave={handleSave}
+        initialTitle={highlight?.title}
+        initialTaskId={highlight?.taskId}
         initialDate={highlight?.date ?? todayDate}
         willReplaceExisting
       />

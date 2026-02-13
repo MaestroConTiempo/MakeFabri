@@ -16,6 +16,7 @@ const TABLES = {
 
 const sharedTasksMode = import.meta.env.VITE_SUPABASE_SHARED_TASKS === 'true';
 const sharedHighlightsMode = sharedTasksMode;
+export const HIGHLIGHT_NOT_DONE_SENTINEL = '1970-01-01T00:00:00.000Z';
 
 type CloudSyncStatus = 'disabled' | 'connecting' | 'ready' | 'error';
 
@@ -180,33 +181,76 @@ function fromHighlightRow(row: HighlightRow): DailyHighlight {
   };
 }
 
-function normalizeHighlights(highlights: DailyHighlight[]): DailyHighlight[] {
-  const byDate = new Map<string, DailyHighlight>();
+function parseTimestamp(value: string): number {
+  const parsed = Date.parse(value);
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function isHighlightMoreRecent(next: DailyHighlight, current: DailyHighlight): boolean {
+  const nextUpdated = parseTimestamp(next.updatedAt);
+  const currentUpdated = parseTimestamp(current.updatedAt);
+  if (nextUpdated !== currentUpdated) return nextUpdated > currentUpdated;
+  return next.createdAt > current.createdAt;
+}
+
+export function isHighlightDone(highlight: DailyHighlight): boolean {
+  return Boolean(highlight.completedAt && highlight.completedAt !== HIGHLIGHT_NOT_DONE_SENTINEL);
+}
+
+export function isHighlightNotDone(highlight: DailyHighlight): boolean {
+  return highlight.completedAt === HIGHLIGHT_NOT_DONE_SENTINEL;
+}
+
+export function isHighlightActive(highlight: DailyHighlight): boolean {
+  return !highlight.completedAt;
+}
+
+function pickMostRecentHighlight(highlights: DailyHighlight[]): DailyHighlight | undefined {
+  let winner: DailyHighlight | undefined;
 
   for (const highlight of highlights) {
-    const current = byDate.get(highlight.date);
-    if (!current) {
-      byDate.set(highlight.date, highlight);
-      continue;
-    }
-
-    const currentUpdated = Date.parse(current.updatedAt);
-    const nextUpdated = Date.parse(highlight.updatedAt);
-    if (nextUpdated > currentUpdated) {
-      byDate.set(highlight.date, highlight);
-      continue;
-    }
-
-    if (nextUpdated === currentUpdated && highlight.createdAt > current.createdAt) {
-      byDate.set(highlight.date, highlight);
+    if (!winner || isHighlightMoreRecent(highlight, winner)) {
+      winner = highlight;
     }
   }
 
-  return [...byDate.values()].sort((a, b) => {
+  return winner;
+}
+
+function enforceSingleActiveHighlight(highlights: DailyHighlight[]): DailyHighlight[] {
+  const activeHighlights = highlights.filter(isHighlightActive);
+  if (activeHighlights.length <= 1) return highlights;
+
+  const keepActive = pickMostRecentHighlight(activeHighlights);
+  if (!keepActive) return highlights;
+
+  return highlights.map(highlight => {
+    if (!isHighlightActive(highlight) || highlight.id === keepActive.id) return highlight;
+    return {
+      ...highlight,
+      completedAt: HIGHLIGHT_NOT_DONE_SENTINEL,
+    };
+  });
+}
+
+function normalizeHighlights(highlights: DailyHighlight[]): DailyHighlight[] {
+  const byId = new Map<string, DailyHighlight>();
+
+  for (const highlight of highlights) {
+    const current = byId.get(highlight.id);
+    if (!current || isHighlightMoreRecent(highlight, current)) {
+      byId.set(highlight.id, highlight);
+    }
+  }
+
+  return [...byId.values()].sort((a, b) => {
+    const activeDelta = Number(isHighlightActive(b)) - Number(isHighlightActive(a));
+    if (activeDelta !== 0) return activeDelta;
+
     if (a.date !== b.date) return b.date.localeCompare(a.date);
 
-    const aUpdated = Date.parse(a.updatedAt);
-    const bUpdated = Date.parse(b.updatedAt);
+    const aUpdated = parseTimestamp(a.updatedAt);
+    const bUpdated = parseTimestamp(b.updatedAt);
     if (aUpdated !== bUpdated) return bUpdated - aUpdated;
 
     return b.createdAt.localeCompare(a.createdAt);
@@ -427,6 +471,49 @@ async function removeAllFromCloud(userId: string) {
   if (settingsDelete.error) throw settingsDelete.error;
 }
 
+function nextBucketOrderIndex(tasks: Task[], bucket: Bucket, excludeTaskId?: string): number {
+  return tasks
+    .filter(task => task.bucket === bucket)
+    .filter(task => task.status !== 'archived')
+    .filter(task => task.id !== excludeTaskId)
+    .length;
+}
+
+function archiveTaskForHighlight(tasks: Task[], taskId: string): boolean {
+  const idx = tasks.findIndex(task => task.id === taskId);
+  if (idx === -1) return false;
+
+  const task = tasks[idx];
+  if (task.status === 'archived') return false;
+
+  tasks[idx] = {
+    ...task,
+    status: 'archived',
+    updatedAt: new Date().toISOString(),
+  };
+
+  return true;
+}
+
+function restoreTaskFromHighlight(tasks: Task[], taskId: string): boolean {
+  const idx = tasks.findIndex(task => task.id === taskId);
+  if (idx === -1) return false;
+
+  const task = tasks[idx];
+  const orderIndex = nextBucketOrderIndex(tasks, task.bucket, task.id);
+  const shouldRestore = task.status === 'archived' || task.status !== 'todo' || task.orderIndex !== orderIndex;
+  if (!shouldRestore) return false;
+
+  tasks[idx] = {
+    ...task,
+    status: 'todo',
+    orderIndex,
+    updatedAt: new Date().toISOString(),
+  };
+
+  return true;
+}
+
 // Tasks
 export function getTasks(): Task[] {
   return readJSON<Task[]>(KEYS.tasks, []);
@@ -499,11 +586,11 @@ export function deleteTask(id: string): boolean {
 // Highlights
 export function getHighlights(): DailyHighlight[] {
   const highlights = readJSON<DailyHighlight[]>(KEYS.highlights, []);
-  return normalizeHighlights(highlights);
+  return enforceSingleActiveHighlight(normalizeHighlights(highlights));
 }
 
 export function saveHighlights(highlights: DailyHighlight[]) {
-  const normalized = normalizeHighlights(highlights);
+  const normalized = enforceSingleActiveHighlight(normalizeHighlights(highlights));
   writeHighlightsLocal(normalized);
 
   enqueueCloudWrite(async () => {
@@ -514,7 +601,11 @@ export function saveHighlights(highlights: DailyHighlight[]) {
 }
 
 export function getHighlightByDate(date: string): DailyHighlight | undefined {
-  return getHighlights().find(h => h.date === date);
+  return getHighlights().find(h => h.date === date && isHighlightActive(h));
+}
+
+export function getActiveHighlight(): DailyHighlight | undefined {
+  return pickMostRecentHighlight(getHighlights().filter(isHighlightActive));
 }
 
 export function getHighlightsRange(startDate: string, endDate: string): DailyHighlight[] {
@@ -525,18 +616,47 @@ export function getHighlightsRange(startDate: string, endDate: string): DailyHig
 
 export function upsertHighlight(data: Omit<DailyHighlight, 'id' | 'createdAt' | 'updatedAt'>): DailyHighlight {
   const highlights = getHighlights();
-  const existing = highlights.findIndex(h => h.date === data.date);
   const now = new Date().toISOString();
+  const activeHighlights = highlights.filter(isHighlightActive);
+  const activeHighlight = pickMostRecentHighlight(activeHighlights);
 
-  if (existing >= 0) {
-    highlights[existing] = {
-      ...highlights[existing],
+  const tasks = getTasks();
+  let tasksChanged = false;
+
+  if (activeHighlight?.taskId && activeHighlight.taskId !== data.taskId) {
+    tasksChanged = restoreTaskFromHighlight(tasks, activeHighlight.taskId) || tasksChanged;
+  }
+
+  if (data.taskId && data.taskId !== activeHighlight?.taskId) {
+    tasksChanged = archiveTaskForHighlight(tasks, data.taskId) || tasksChanged;
+  }
+
+  if (tasksChanged) {
+    saveTasks(tasks);
+  }
+
+  const sanitizedHighlights = highlights.map(highlight => {
+    if (!isHighlightActive(highlight)) return highlight;
+    if (activeHighlight && highlight.id === activeHighlight.id) return highlight;
+
+    return {
+      ...highlight,
+      completedAt: HIGHLIGHT_NOT_DONE_SENTINEL,
+      updatedAt: now,
+    };
+  });
+
+  if (activeHighlight) {
+    const idx = sanitizedHighlights.findIndex(h => h.id === activeHighlight.id);
+    sanitizedHighlights[idx] = {
+      ...sanitizedHighlights[idx],
       ...data,
       completedAt: undefined,
       updatedAt: now,
     };
-    saveHighlights(highlights);
-    return highlights[existing];
+
+    saveHighlights(sanitizedHighlights);
+    return sanitizedHighlights[idx];
   }
 
   const highlight: DailyHighlight = {
@@ -545,8 +665,9 @@ export function upsertHighlight(data: Omit<DailyHighlight, 'id' | 'createdAt' | 
     createdAt: now,
     updatedAt: now,
   };
-  highlights.push(highlight);
-  saveHighlights(highlights);
+
+  sanitizedHighlights.push(highlight);
+  saveHighlights(sanitizedHighlights);
   return highlight;
 }
 
@@ -562,13 +683,60 @@ export function setHighlightCompletion(id: string, completed: boolean): DailyHig
   const highlights = getHighlights();
   const idx = highlights.findIndex(h => h.id === id);
   if (idx === -1) return null;
+  const now = new Date().toISOString();
 
+  if (completed) {
+    highlights[idx] = {
+      ...highlights[idx],
+      completedAt: now,
+      updatedAt: now,
+    };
+
+    saveHighlights(highlights);
+
+    if (highlights[idx].taskId) {
+      const tasks = getTasks();
+      const archived = archiveTaskForHighlight(tasks, highlights[idx].taskId);
+      if (archived) {
+        saveTasks(tasks);
+      }
+    }
+
+    return highlights[idx];
+  }
+
+  const anotherActiveExists = highlights.some(h => h.id !== id && isHighlightActive(h));
   highlights[idx] = {
     ...highlights[idx],
-    completedAt: completed ? new Date().toISOString() : undefined,
-    updatedAt: new Date().toISOString(),
+    completedAt: anotherActiveExists ? HIGHLIGHT_NOT_DONE_SENTINEL : undefined,
+    updatedAt: now,
+  };
+
+  saveHighlights(highlights);
+  return highlights[idx];
+}
+
+export function markHighlightNotDone(id: string): DailyHighlight | null {
+  const highlights = getHighlights();
+  const idx = highlights.findIndex(h => h.id === id);
+  if (idx === -1) return null;
+
+  const now = new Date().toISOString();
+  highlights[idx] = {
+    ...highlights[idx],
+    completedAt: HIGHLIGHT_NOT_DONE_SENTINEL,
+    updatedAt: now,
   };
   saveHighlights(highlights);
+
+  if (highlights[idx].taskId) {
+    const tasks = getTasks();
+    const restored = restoreTaskFromHighlight(tasks, highlights[idx].taskId);
+    if (restored) {
+      saveTasks(tasks);
+    }
+  }
+
   return highlights[idx];
 }
 
@@ -585,6 +753,15 @@ export function deleteHighlight(id: string): boolean {
   const highlights = getHighlights();
   const idx = highlights.findIndex(h => h.id === id);
   if (idx === -1) return false;
+  const highlight = highlights[idx];
+
+  if (highlight.taskId && !isHighlightDone(highlight)) {
+    const tasks = getTasks();
+    const restored = restoreTaskFromHighlight(tasks, highlight.taskId);
+    if (restored) {
+      saveTasks(tasks);
+    }
+  }
 
   highlights.splice(idx, 1);
   saveHighlights(highlights);
@@ -666,7 +843,7 @@ export async function initializeCloudSync(force = false) {
 
     const remoteHasData = remoteTasks.length > 0 || remoteHighlights.length > 0 || Boolean(remoteSettings);
     const localTasks = getTasks();
-    const localHighlights = getHighlights();
+    const localHighlights = enforceSingleActiveHighlight(getHighlights());
     const localSettings = getSettings();
     const localHasData = localTasks.length > 0 || localHighlights.length > 0 || !isDefaultSettings(localSettings);
 
@@ -674,7 +851,7 @@ export async function initializeCloudSync(force = false) {
 
     if (remoteHasData) {
       writeTasksLocal(remoteTasks);
-      writeHighlightsLocal(normalizeHighlights(remoteHighlights));
+      writeHighlightsLocal(enforceSingleActiveHighlight(normalizeHighlights(remoteHighlights)));
       writeSettingsLocal(remoteSettings || { ...DEFAULT_SETTINGS });
     } else if (localHasData) {
       await Promise.all([

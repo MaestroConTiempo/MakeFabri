@@ -8,9 +8,8 @@ import {
 } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
 import { buildScheduledAt, getTomorrowDate } from '@/lib/dates';
-import { getHighlights, setHighlightCompletion, updateHighlight } from '@/lib/storage';
+import { getActiveHighlight, markHighlightNotDone, setHighlightCompletion, updateHighlight } from '@/lib/storage';
 import { DailyHighlight } from '@/lib/types';
-import { getReviewedHighlightIds, markHighlightReviewed } from '@/lib/highlightReview';
 import { format } from 'date-fns';
 import { toast } from 'sonner';
 
@@ -22,13 +21,9 @@ const OverdueHighlightPrompt: React.FC = () => {
 
   const overdueHighlight = (() => {
     const now = Date.now();
-    const reviewed = getReviewedHighlightIds();
-
-    return getHighlights()
-      .filter(h => !h.completedAt)
-      .filter(h => !reviewed.has(h.id))
-      .filter(h => Date.parse(h.scheduledAt) <= now)
-      .sort((a, b) => Date.parse(a.scheduledAt) - Date.parse(b.scheduledAt))[0];
+    const activeHighlight = getActiveHighlight();
+    if (!activeHighlight) return undefined;
+    return Date.parse(activeHighlight.scheduledAt) <= now ? activeHighlight : undefined;
   })();
 
   const open = Boolean(overdueHighlight);
@@ -40,7 +35,6 @@ const OverdueHighlightPrompt: React.FC = () => {
 
   const handleDoneYes = useCallback((highlight: DailyHighlight) => {
     setHighlightCompletion(highlight.id, true);
-    markHighlightReviewed(highlight.id);
     toast.success('Perfecto. Se marco como realizado y quedo en el historial.');
     closePrompt();
   }, [closePrompt]);
@@ -63,8 +57,8 @@ const OverdueHighlightPrompt: React.FC = () => {
   }, [closePrompt]);
 
   const handleSendToHistoryNotDone = useCallback((highlight: DailyHighlight) => {
-    markHighlightReviewed(highlight.id);
-    toast.success('Se envio al historial como no realizado.');
+    markHighlightNotDone(highlight.id);
+    toast.success('Se envio al historial como no realizado y la tarea volvio a su fogon.');
     closePrompt();
   }, [closePrompt]);
 

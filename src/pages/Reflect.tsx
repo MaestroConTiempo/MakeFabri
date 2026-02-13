@@ -4,10 +4,11 @@ import { Button } from '@/components/ui/button';
 import {
   deleteHighlight,
   getHighlightsRange,
+  isHighlightDone,
   initializeCloudSync,
+  markHighlightNotDone,
   setHighlightCompletion,
 } from '@/lib/storage';
-import { getReviewedHighlightIds, unmarkHighlightReviewed } from '@/lib/highlightReview';
 import { format, subDays } from 'date-fns';
 import { getTodayDate } from '@/lib/dates';
 import { Check, RotateCcw, Trash2 } from 'lucide-react';
@@ -25,8 +26,7 @@ const ReflectPage: React.FC = () => {
   const today = getTodayDate();
   const startDate = format(subDays(new Date(), days), 'yyyy-MM-dd');
   const highlights = getHighlightsRange(startDate, today);
-  const reviewedHighlightIds = getReviewedHighlightIds();
-  const visibleHighlights = highlights.filter(h => reviewedHighlightIds.has(h.id));
+  const visibleHighlights = highlights.filter(h => Boolean(h.completedAt));
 
   useEffect(() => {
     let disposed = false;
@@ -40,8 +40,13 @@ const ReflectPage: React.FC = () => {
     };
   }, []);
 
-  const handleSetCompletion = (id: string, completed: boolean) => {
-    setHighlightCompletion(id, completed);
+  const handleSetDone = (id: string) => {
+    setHighlightCompletion(id, true);
+    setRefresh(r => r + 1);
+  };
+
+  const handleSetNotDone = (id: string) => {
+    markHighlightNotDone(id);
     setRefresh(r => r + 1);
   };
 
@@ -55,7 +60,6 @@ const ReflectPage: React.FC = () => {
       return;
     }
 
-    unmarkHighlightReviewed(id);
     toast.success('Highlight eliminado.', { duration: 1800 });
     setRefresh(r => r + 1);
   };
@@ -90,54 +94,58 @@ const ReflectPage: React.FC = () => {
           </div>
         ) : (
           <div className="space-y-3">
-            {visibleHighlights.map(h => (
-              <div
-                key={h.id}
-                className={`bucket-section flex items-start gap-4 ${h.completedAt ? 'opacity-70' : ''}`}
-              >
-                <div className="flex-1">
-                  <p className="text-xs text-muted-foreground mb-1">
-                    {format(new Date(h.date + 'T00:00:00'), 'EEE d MMM')}
-                    {' - '}
-                    {format(new Date(h.scheduledAt), 'HH:mm')}
-                    {' - '}
-                    {h.durationMinutes} min
-                  </p>
-                  <p className={`font-semibold font-display ${h.completedAt ? 'line-through' : ''}`}>
-                    {h.title}
-                  </p>
-                </div>
-                <div className="flex-shrink-0 flex gap-2">
-                  {h.completedAt ? (
+            {visibleHighlights.map(h => {
+              const done = isHighlightDone(h);
+
+              return (
+                <div
+                  key={h.id}
+                  className={`bucket-section flex items-start gap-4 ${done ? 'opacity-70' : ''}`}
+                >
+                  <div className="flex-1">
+                    <p className="text-xs text-muted-foreground mb-1">
+                      {format(new Date(h.date + 'T00:00:00'), 'EEE d MMM')}
+                      {' - '}
+                      {format(new Date(h.scheduledAt), 'HH:mm')}
+                      {' - '}
+                      {h.durationMinutes} min
+                    </p>
+                    <p className={`font-semibold font-display ${done ? 'line-through' : ''}`}>
+                      {h.title}
+                    </p>
+                  </div>
+                  <div className="flex-shrink-0 flex gap-2">
+                    {done ? (
+                      <Button
+                        variant="outline"
+                        onClick={() => handleSetNotDone(h.id)}
+                        className="h-9 px-3 text-sm md:h-11 md:px-4 md:text-base gap-1"
+                      >
+                        <RotateCcw className="h-4 w-4 md:h-5 md:w-5" />
+                        No hecho
+                      </Button>
+                    ) : (
+                      <Button
+                        variant="outline"
+                        onClick={() => handleSetDone(h.id)}
+                        className="h-9 px-3 text-sm md:h-11 md:px-4 md:text-base gap-1"
+                      >
+                        <Check className="h-4 w-4 md:h-5 md:w-5" />
+                        Hecho
+                      </Button>
+                    )}
                     <Button
                       variant="outline"
-                      onClick={() => handleSetCompletion(h.id, false)}
-                      className="h-9 px-3 text-sm md:h-11 md:px-4 md:text-base gap-1"
+                      onClick={() => handleDeleteHighlight(h.id)}
+                      className="h-9 px-3 text-sm md:h-11 md:px-4 md:text-base gap-1 text-destructive border-destructive/30 hover:bg-destructive/10"
                     >
-                      <RotateCcw className="h-4 w-4 md:h-5 md:w-5" />
-                      No hecho
+                      <Trash2 className="h-4 w-4 md:h-5 md:w-5" />
+                      Eliminar
                     </Button>
-                  ) : (
-                    <Button
-                      variant="outline"
-                      onClick={() => handleSetCompletion(h.id, true)}
-                      className="h-9 px-3 text-sm md:h-11 md:px-4 md:text-base gap-1"
-                    >
-                      <Check className="h-4 w-4 md:h-5 md:w-5" />
-                      Hecho
-                    </Button>
-                  )}
-                  <Button
-                    variant="outline"
-                    onClick={() => handleDeleteHighlight(h.id)}
-                    className="h-9 px-3 text-sm md:h-11 md:px-4 md:text-base gap-1 text-destructive border-destructive/30 hover:bg-destructive/10"
-                  >
-                    <Trash2 className="h-4 w-4 md:h-5 md:w-5" />
-                    Eliminar
-                  </Button>
+                  </div>
                 </div>
-              </div>
-            ))}
+              );
+            })}
           </div>
         )}
       </div>
