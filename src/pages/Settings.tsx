@@ -123,10 +123,10 @@ const SettingsPage: React.FC = () => {
   };
 
   return (
-    <div className="min-h-screen pb-24">
+    <div className="min-h-screen pb-24 flex flex-col">
       <WaveHeader title="Ajustes" subtitle="Configura la app" />
 
-      <div className="px-6 -mt-4 space-y-6 animate-fade-in">
+      <div className="w-full max-w-md mx-auto px-6 pt-8 pb-4 space-y-6 animate-fade-in">
         {/* Timezone */}
         <div>
           <Label>Zona horaria</Label>

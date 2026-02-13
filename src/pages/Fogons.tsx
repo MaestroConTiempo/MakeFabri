@@ -131,7 +131,23 @@ const FogonsPage: React.FC = () => {
               value={newTitle}
               onChange={e => setNewTitle(e.target.value)}
               placeholder="Nueva tarea..."
-              onKeyDown={e => e.key === 'Enter' && handleAddTask(bucket)}
+              onKeyDown={e => {
+                if (e.key === 'Enter') {
+                  handleAddTask(bucket);
+                  return;
+                }
+
+                if (e.key === 'Escape') {
+                  setAddingTo(null);
+                  setNewTitle('');
+                }
+              }}
+              onBlur={() => {
+                if (!newTitle.trim()) {
+                  setAddingTo(null);
+                  setNewTitle('');
+                }
+              }}
               autoFocus
               className="text-sm h-9"
             />
