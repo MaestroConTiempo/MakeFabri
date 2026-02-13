@@ -1,4 +1,7 @@
 import React, { useState, useCallback, useEffect } from 'react';
+import { format } from 'date-fns';
+import { Plus, MoreHorizontal, Star, Pencil } from 'lucide-react';
+import { toast } from 'sonner';
 import WaveHeader from '@/components/WaveHeader';
 import HighlightModal from '@/components/HighlightModal';
 import { Button } from '@/components/ui/button';
@@ -26,11 +29,6 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import { Checkbox } from '@/components/ui/checkbox';
-import { Plus, MoreHorizontal, Star, Pencil } from 'lucide-react';
-import { format } from 'date-fns';
-import { toast } from 'sonner';
-
-const BUCKETS: Bucket[] = ['stove_main', 'stove_secondary', 'sink'];
 
 const FogonsPage: React.FC = () => {
   const [refresh, setRefresh] = useState(0);
@@ -39,6 +37,8 @@ const FogonsPage: React.FC = () => {
   const [bucketNames, setBucketNames] = useState(getBucketNames);
   const [editingBucketName, setEditingBucketName] = useState<Bucket | null>(null);
   const [bucketNameDraft, setBucketNameDraft] = useState('');
+  const [editingTaskId, setEditingTaskId] = useState<string | null>(null);
+  const [editingTaskTitle, setEditingTaskTitle] = useState('');
   const [highlightModal, setHighlightModal] = useState<{ open: boolean; task?: Task }>({ open: false });
 
   const tomorrowDate = getTomorrowDate();
@@ -78,6 +78,29 @@ const FogonsPage: React.FC = () => {
     const newStatus = task.status === 'done' ? 'todo' : 'done';
     updateTask(task.id, { status: newStatus });
     doRefresh();
+  };
+
+  const startTaskEdit = (task: Task) => {
+    setEditingTaskId(task.id);
+    setEditingTaskTitle(task.title);
+  };
+
+  const cancelTaskEdit = () => {
+    setEditingTaskId(null);
+    setEditingTaskTitle('');
+  };
+
+  const saveTaskEdit = (taskId: string) => {
+    const title = editingTaskTitle.trim();
+    if (!title) {
+      cancelTaskEdit();
+      return;
+    }
+
+    updateTask(taskId, { title });
+    cancelTaskEdit();
+    doRefresh();
+    toast.success('Tarea actualizada');
   };
 
   const startBucketNameEdit = (bucket: Bucket) => {
@@ -128,8 +151,10 @@ const FogonsPage: React.FC = () => {
     },
     []
   );
+
   const renderBucket = (bucket: Bucket) => {
     const tasks = getTasksByBucket(bucket);
+
     return (
       <div className="bucket-section h-full p-4">
         <div className="flex items-center justify-between mb-3">
@@ -235,39 +260,73 @@ const FogonsPage: React.FC = () => {
               <Checkbox
                 checked={task.status === 'done'}
                 onCheckedChange={() => toggleTaskStatus(task)}
+                disabled={editingTaskId === task.id}
                 className="h-4 w-4"
               />
-              <span className={`flex-1 text-sm leading-snug ${task.status === 'done' ? 'line-through text-muted-foreground' : ''}`}>
-                {task.title}
-              </span>
-              <button
-                onClick={() => setHighlightModal({ open: true, task })}
-                className="text-mt-yellow hover:scale-110 transition-transform flex-shrink-0 opacity-0 group-hover:opacity-100"
-                title="Hacer Highlight de mañana"
-              >
-                <Star size={16} />
-              </button>
-              <DropdownMenu>
-                <DropdownMenuTrigger asChild>
-                  <button className="text-muted-foreground hover:text-foreground flex-shrink-0 opacity-0 group-hover:opacity-100">
-                    <MoreHorizontal size={16} />
-                  </button>
-                </DropdownMenuTrigger>
-                <DropdownMenuContent align="end">
-                  <DropdownMenuItem onClick={() => { archiveTask(task.id); doRefresh(); }}>
-                    Archivar
-                  </DropdownMenuItem>
-                  <DropdownMenuItem
-                    className="text-destructive focus:text-destructive"
-                    onClick={() => {
-                      deleteTask(task.id);
-                      doRefresh();
+
+              {editingTaskId === task.id ? (
+                <>
+                  <Input
+                    value={editingTaskTitle}
+                    onChange={e => setEditingTaskTitle(e.target.value)}
+                    className="flex-1 h-8 text-sm"
+                    autoFocus
+                    onKeyDown={e => {
+                      if (e.key === 'Enter') {
+                        saveTaskEdit(task.id);
+                        return;
+                      }
+
+                      if (e.key === 'Escape') {
+                        cancelTaskEdit();
+                      }
                     }}
+                  />
+                  <Button size="sm" className="h-8 px-2" onClick={() => saveTaskEdit(task.id)}>
+                    Guardar
+                  </Button>
+                  <Button size="sm" variant="outline" className="h-8 px-2" onClick={cancelTaskEdit}>
+                    Cancelar
+                  </Button>
+                </>
+              ) : (
+                <>
+                  <span className={`flex-1 text-sm leading-snug ${task.status === 'done' ? 'line-through text-muted-foreground' : ''}`}>
+                    {task.title}
+                  </span>
+                  <button
+                    onClick={() => setHighlightModal({ open: true, task })}
+                    className="text-mt-yellow hover:scale-110 transition-transform flex-shrink-0 opacity-0 group-hover:opacity-100"
+                    title="Hacer Highlight de manana"
                   >
-                    Eliminar
-                  </DropdownMenuItem>
-                </DropdownMenuContent>
-              </DropdownMenu>
+                    <Star size={16} />
+                  </button>
+                  <DropdownMenu>
+                    <DropdownMenuTrigger asChild>
+                      <button className="text-muted-foreground hover:text-foreground flex-shrink-0 opacity-0 group-hover:opacity-100">
+                        <MoreHorizontal size={16} />
+                      </button>
+                    </DropdownMenuTrigger>
+                    <DropdownMenuContent align="end">
+                      <DropdownMenuItem onClick={() => startTaskEdit(task)}>
+                        Editar
+                      </DropdownMenuItem>
+                      <DropdownMenuItem onClick={() => { archiveTask(task.id); doRefresh(); }}>
+                        Archivar
+                      </DropdownMenuItem>
+                      <DropdownMenuItem
+                        className="text-destructive focus:text-destructive"
+                        onClick={() => {
+                          deleteTask(task.id);
+                          doRefresh();
+                        }}
+                      >
+                        Eliminar
+                      </DropdownMenuItem>
+                    </DropdownMenuContent>
+                  </DropdownMenu>
+                </>
+              )}
             </div>
           ))}
         </div>
@@ -280,11 +339,10 @@ const FogonsPage: React.FC = () => {
       <WaveHeader title="Fogones" subtitle="Tus tareas organizadas" />
 
       <div className="px-4 pt-2 animate-fade-in">
-        {/* Tomorrow's highlight banner */}
         {tomorrowHighlight && (
           <div className="highlight-banner flex items-center justify-between mb-4">
             <div className="text-sm">
-              <span className="opacity-60">Mañana: </span>
+              <span className="opacity-60">Manana: </span>
               <strong>{tomorrowHighlight.title}</strong>
               <span className="opacity-60 ml-1">
                 {format(new Date(tomorrowHighlight.scheduledAt), 'HH:mm')}
@@ -301,19 +359,13 @@ const FogonsPage: React.FC = () => {
           </div>
         )}
 
-        {/* 2-column layout: main left, secondary+sink right */}
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2" style={{ minHeight: '65vh' }}>
-          {/* Left column: Fogón principal (full height) */}
           <div className="sm:row-span-2">
             {renderBucket('stove_main')}
           </div>
-
-          {/* Right top: Fogón secundario */}
           <div>
             {renderBucket('stove_secondary')}
           </div>
-
-          {/* Right bottom: Fregadero */}
           <div>
             {renderBucket('sink')}
           </div>
