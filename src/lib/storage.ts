@@ -1,4 +1,12 @@
-import { Task, DailyHighlight, AppSettings, DEFAULT_SETTINGS, Bucket } from './types';
+import {
+  Task,
+  DailyHighlight,
+  AppSettings,
+  DEFAULT_SETTINGS,
+  Bucket,
+  BucketNames,
+  DEFAULT_BUCKET_NAMES,
+} from './types';
 import { v4 as uuid } from 'uuid';
 import { hasSupabaseConfig, supabase } from './supabase';
 
@@ -6,12 +14,14 @@ const KEYS = {
   tasks: 'mt_tasks',
   highlights: 'mt_highlights',
   settings: 'mt_settings',
+  bucketNames: 'mt_bucket_names',
 };
 
 const TABLES = {
   tasks: 'mt_tasks',
   highlights: 'mt_highlights',
   settings: 'mt_settings',
+  bucketNames: 'mt_bucket_names',
 };
 
 const sharedTasksMode = import.meta.env.VITE_SUPABASE_SHARED_TASKS === 'true';
@@ -64,6 +74,16 @@ interface SettingsRow {
   updated_at: string;
 }
 
+interface BucketNamesRow {
+  id: string;
+  stove_main_name: string;
+  stove_secondary_name: string;
+  sink_name: string;
+  updated_at: string;
+}
+
+const SHARED_BUCKET_NAMES_ROW_ID = 'global';
+
 let cloudSyncStatus: CloudSyncStatus = hasSupabaseConfig() ? 'connecting' : 'disabled';
 let cloudSyncMessage = hasSupabaseConfig()
   ? 'Sincronizacion con Supabase pendiente'
@@ -110,11 +130,21 @@ function writeSettingsLocal(settings: AppSettings) {
   localStorage.setItem(KEYS.settings, JSON.stringify(settings));
 }
 
+function writeBucketNamesLocal(bucketNames: BucketNames) {
+  localStorage.setItem(KEYS.bucketNames, JSON.stringify(bucketNames));
+}
+
 function isDefaultSettings(settings: AppSettings): boolean {
   return settings.timezone === DEFAULT_SETTINGS.timezone
     && settings.defaultDurationMinutes === DEFAULT_SETTINGS.defaultDurationMinutes
     && settings.defaultRemindBeforeMinutes === DEFAULT_SETTINGS.defaultRemindBeforeMinutes
     && settings.defaultPlanHour === DEFAULT_SETTINGS.defaultPlanHour;
+}
+
+function isDefaultBucketNames(bucketNames: BucketNames): boolean {
+  return bucketNames.stove_main.trim() === ''
+    && bucketNames.stove_secondary.trim() === ''
+    && bucketNames.sink.trim() === '';
 }
 
 function toTaskRow(task: Task, userId: string): TaskRow {
@@ -277,6 +307,31 @@ function fromSettingsRow(row: SettingsRow): AppSettings {
   };
 }
 
+function toBucketNamesRow(bucketNames: BucketNames): BucketNamesRow {
+  return {
+    id: SHARED_BUCKET_NAMES_ROW_ID,
+    stove_main_name: bucketNames.stove_main,
+    stove_secondary_name: bucketNames.stove_secondary,
+    sink_name: bucketNames.sink,
+    updated_at: new Date().toISOString(),
+  };
+}
+
+function fromBucketNamesRow(row: BucketNamesRow): BucketNames {
+  return {
+    stove_main: row.stove_main_name || '',
+    stove_secondary: row.stove_secondary_name || '',
+    sink: row.sink_name || '',
+  };
+}
+
+function isBucketNamesTableMissing(error: unknown): boolean {
+  if (!error || typeof error !== 'object') return false;
+  const message = 'message' in error && typeof error.message === 'string' ? error.message : '';
+  const code = 'code' in error && typeof error.code === 'string' ? error.code : '';
+  return code === '42P01' || message.includes(TABLES.bucketNames);
+}
+
 function enqueueCloudWrite(op: () => Promise<void>) {
   if (!hasSupabaseConfig() || !supabase || suppressCloudWrites) return;
 
@@ -417,6 +472,37 @@ async function pushSettingsToCloud(userId: string, settings: AppSettings) {
   if (upsertError) throw upsertError;
 }
 
+async function pushBucketNamesToCloud(bucketNames: BucketNames) {
+  if (!supabase) return;
+
+  const { error: upsertError } = await supabase
+    .from(TABLES.bucketNames)
+    .upsert(toBucketNamesRow(bucketNames), { onConflict: 'id' });
+
+  if (upsertError) {
+    if (isBucketNamesTableMissing(upsertError)) return;
+    throw upsertError;
+  }
+}
+
+async function fetchBucketNamesFromCloud(): Promise<BucketNames | null> {
+  if (!supabase) return null;
+
+  const { data, error } = await supabase
+    .from(TABLES.bucketNames)
+    .select('*')
+    .eq('id', SHARED_BUCKET_NAMES_ROW_ID)
+    .maybeSingle();
+
+  if (error) {
+    if (isBucketNamesTableMissing(error)) return null;
+    throw error;
+  }
+
+  if (!data) return null;
+  return fromBucketNamesRow(data as BucketNamesRow);
+}
+
 async function deleteTaskFromCloud(userId: string, id: string) {
   if (!supabase) return;
 
@@ -466,9 +552,17 @@ async function removeAllFromCloud(userId: string) {
     supabase.from(TABLES.settings).delete().eq('user_id', userId),
   ]);
 
+  const { error: bucketNamesDeleteError } = await supabase
+    .from(TABLES.bucketNames)
+    .delete()
+    .eq('id', SHARED_BUCKET_NAMES_ROW_ID);
+
   if (tasksDelete.error) throw tasksDelete.error;
   if (highlightsDelete.error) throw highlightsDelete.error;
   if (settingsDelete.error) throw settingsDelete.error;
+  if (bucketNamesDeleteError && !isBucketNamesTableMissing(bucketNamesDeleteError)) {
+    throw bucketNamesDeleteError;
+  }
 }
 
 function nextBucketOrderIndex(tasks: Task[], bucket: Bucket, excludeTaskId?: string): number {
@@ -791,6 +885,32 @@ export function saveSettings(settings: AppSettings) {
   });
 }
 
+// Bucket names
+export function getBucketNames(): BucketNames {
+  const raw = readJSON<Partial<BucketNames> | null>(KEYS.bucketNames, null);
+  return raw ? { ...DEFAULT_BUCKET_NAMES, ...raw } : { ...DEFAULT_BUCKET_NAMES };
+}
+
+export function saveBucketNames(bucketNames: BucketNames) {
+  const normalized = { ...DEFAULT_BUCKET_NAMES, ...bucketNames };
+  writeBucketNamesLocal(normalized);
+
+  enqueueCloudWrite(async () => {
+    const userId = await ensureCloudUserId();
+    if (!userId) return;
+    await pushBucketNamesToCloud(normalized);
+  });
+}
+
+export function updateBucketName(bucket: Bucket, name: string): BucketNames {
+  const next = {
+    ...getBucketNames(),
+    [bucket]: name.trim(),
+  };
+  saveBucketNames(next);
+  return next;
+}
+
 // Cloud bootstrap
 export async function initializeCloudSync(force = false) {
   if (cloudSyncInitialized && !force) return;
@@ -840,11 +960,14 @@ export async function initializeCloudSync(force = false) {
     const remoteTasks = (tasksResult.data || []).map(row => fromTaskRow(row as TaskRow));
     const remoteHighlights = (highlightsResult.data || []).map(row => fromHighlightRow(row as HighlightRow));
     const remoteSettings = settingsResult.data ? fromSettingsRow(settingsResult.data as SettingsRow) : null;
+    const remoteBucketNames = await fetchBucketNamesFromCloud();
 
     const remoteHasData = remoteTasks.length > 0 || remoteHighlights.length > 0 || Boolean(remoteSettings);
     const localTasks = getTasks();
     const localHighlights = enforceSingleActiveHighlight(getHighlights());
     const localSettings = getSettings();
+    const localBucketNames = getBucketNames();
+    const localHasBucketNames = !isDefaultBucketNames(localBucketNames);
     const localHasData = localTasks.length > 0 || localHighlights.length > 0 || !isDefaultSettings(localSettings);
 
     suppressCloudWrites = true;
@@ -859,6 +982,14 @@ export async function initializeCloudSync(force = false) {
         pushHighlightsToCloud(userId, localHighlights),
         pushSettingsToCloud(userId, localSettings),
       ]);
+    }
+
+    if (remoteBucketNames) {
+      writeBucketNamesLocal(remoteBucketNames);
+    } else if (localHasBucketNames) {
+      await pushBucketNamesToCloud(localBucketNames);
+    } else {
+      writeBucketNamesLocal({ ...DEFAULT_BUCKET_NAMES });
     }
 
     setCloudSyncStatus('ready', 'Sincronizacion con Supabase activa');
@@ -876,6 +1007,7 @@ export function exportAllData(): string {
     tasks: getTasks(),
     highlights: getHighlights(),
     settings: getSettings(),
+    bucketNames: getBucketNames(),
   }, null, 2);
 }
 
@@ -884,12 +1016,14 @@ export function importAllData(json: string) {
   if (data.tasks) saveTasks(data.tasks);
   if (data.highlights) saveHighlights(data.highlights);
   if (data.settings) saveSettings(data.settings);
+  if (data.bucketNames) saveBucketNames(data.bucketNames);
 }
 
 export function resetAllData() {
   localStorage.removeItem(KEYS.tasks);
   localStorage.removeItem(KEYS.highlights);
   localStorage.removeItem(KEYS.settings);
+  localStorage.removeItem(KEYS.bucketNames);
 
   enqueueCloudWrite(async () => {
     const userId = await ensureCloudUserId();

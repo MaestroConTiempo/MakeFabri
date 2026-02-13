@@ -5,9 +5,11 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import {
   getActiveHighlight,
+  getBucketNames,
   getTasksByBucket,
   createTask,
   updateTask,
+  updateBucketName,
   archiveTask,
   deleteTask,
   upsertHighlight,
@@ -34,13 +36,19 @@ const FogonsPage: React.FC = () => {
   const [refresh, setRefresh] = useState(0);
   const [addingTo, setAddingTo] = useState<Bucket | null>(null);
   const [newTitle, setNewTitle] = useState('');
+  const [bucketNames, setBucketNames] = useState(getBucketNames);
+  const [editingBucketName, setEditingBucketName] = useState<Bucket | null>(null);
+  const [bucketNameDraft, setBucketNameDraft] = useState('');
   const [highlightModal, setHighlightModal] = useState<{ open: boolean; task?: Task }>({ open: false });
 
   const tomorrowDate = getTomorrowDate();
   const activeHighlight = getActiveHighlight();
   const tomorrowHighlight = activeHighlight?.date === tomorrowDate ? activeHighlight : undefined;
 
-  const doRefresh = () => setRefresh(r => r + 1);
+  const doRefresh = () => {
+    setBucketNames(getBucketNames());
+    setRefresh(r => r + 1);
+  };
 
   useEffect(() => {
     let disposed = false;
@@ -70,6 +78,24 @@ const FogonsPage: React.FC = () => {
     const newStatus = task.status === 'done' ? 'todo' : 'done';
     updateTask(task.id, { status: newStatus });
     doRefresh();
+  };
+
+  const startBucketNameEdit = (bucket: Bucket) => {
+    setEditingBucketName(bucket);
+    setBucketNameDraft(bucketNames[bucket] ?? '');
+  };
+
+  const cancelBucketNameEdit = () => {
+    setEditingBucketName(null);
+    setBucketNameDraft('');
+  };
+
+  const saveBucketName = () => {
+    if (!editingBucketName) return;
+    const next = updateBucketName(editingBucketName, bucketNameDraft);
+    setBucketNames(next);
+    setEditingBucketName(null);
+    setBucketNameDraft('');
   };
 
   const handleHighlightSave = useCallback(
@@ -109,21 +135,63 @@ const FogonsPage: React.FC = () => {
         <div className="flex items-center justify-between mb-3">
           <h2 className="text-sm font-bold font-display flex items-center gap-1.5">
             <span className="text-lg">{BUCKET_ICONS[bucket]}</span>
-            {BUCKET_LABELS[bucket]}
+            <span>{BUCKET_LABELS[bucket]}</span>
+            {bucketNames[bucket] && (
+              <span className="text-muted-foreground font-medium text-xs">
+                - {bucketNames[bucket]}
+              </span>
+            )}
             <span className="text-muted-foreground font-normal text-xs">({tasks.length})</span>
           </h2>
-          <Button
-            variant="ghost"
-            size="sm"
-            className="h-8 w-8 p-0"
-            onClick={() => {
-              setAddingTo(addingTo === bucket ? null : bucket);
-              setNewTitle('');
-            }}
-          >
-            <Plus size={18} />
-          </Button>
+          <div className="flex items-center gap-1">
+            <Button
+              variant="ghost"
+              size="sm"
+              className="h-8 w-8 p-0"
+              onClick={() => startBucketNameEdit(bucket)}
+              title="Renombrar fogon"
+            >
+              <Pencil size={14} />
+            </Button>
+            <Button
+              variant="ghost"
+              size="sm"
+              className="h-8 w-8 p-0"
+              onClick={() => {
+                setAddingTo(addingTo === bucket ? null : bucket);
+                setNewTitle('');
+              }}
+            >
+              <Plus size={18} />
+            </Button>
+          </div>
         </div>
+
+        {editingBucketName === bucket && (
+          <div className="flex gap-2 mb-3">
+            <Input
+              value={bucketNameDraft}
+              onChange={e => setBucketNameDraft(e.target.value)}
+              placeholder="Nombre del fogon..."
+              onKeyDown={e => {
+                if (e.key === 'Enter') {
+                  saveBucketName();
+                  return;
+                }
+
+                if (e.key === 'Escape') {
+                  cancelBucketNameEdit();
+                }
+              }}
+              onBlur={saveBucketName}
+              autoFocus
+              className="text-sm h-9"
+            />
+            <Button size="sm" onClick={saveBucketName} className="bg-primary h-9 px-3">
+              OK
+            </Button>
+          </div>
+        )}
 
         {addingTo === bucket && (
           <div className="flex gap-2 mb-3">

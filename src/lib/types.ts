@@ -1,5 +1,6 @@
 export type Bucket = 'stove_main' | 'stove_secondary' | 'sink';
 export type TaskStatus = 'todo' | 'doing' | 'done' | 'archived';
+export type BucketNames = Record<Bucket, string>;
 
 export interface Task {
   id: string;
@@ -52,4 +53,10 @@ export const DEFAULT_SETTINGS: AppSettings = {
   defaultDurationMinutes: 60,
   defaultRemindBeforeMinutes: 30,
   defaultPlanHour: '20:30',
+};
+
+export const DEFAULT_BUCKET_NAMES: BucketNames = {
+  stove_main: '',
+  stove_secondary: '',
+  sink: '',
 };
