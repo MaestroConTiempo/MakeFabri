@@ -566,11 +566,48 @@ async function removeAllFromCloud(userId: string) {
 }
 
 function nextBucketOrderIndex(tasks: Task[], bucket: Bucket, excludeTaskId?: string): number {
+  return getOrderedVisibleTasks(tasks, bucket, excludeTaskId).length;
+}
+
+function sortTasksByOrder(a: Task, b: Task): number {
+  if (a.orderIndex !== b.orderIndex) return a.orderIndex - b.orderIndex;
+  if (a.createdAt !== b.createdAt) return a.createdAt.localeCompare(b.createdAt);
+  return a.id.localeCompare(b.id);
+}
+
+function getOrderedVisibleTasks(tasks: Task[], bucket: Bucket, excludeTaskId?: string): Task[] {
   return tasks
     .filter(task => task.bucket === bucket)
     .filter(task => task.status !== 'archived')
     .filter(task => task.id !== excludeTaskId)
-    .length;
+    .sort(sortTasksByOrder);
+}
+
+function applyTaskOrdering(tasks: Task[], bucket: Bucket, orderedTasks: Task[], now: string): boolean {
+  const taskIndexes = new Map(tasks.map((task, index) => [task.id, index]));
+  let changed = false;
+
+  orderedTasks.forEach((orderedTask, orderIndex) => {
+    const taskIndex = taskIndexes.get(orderedTask.id);
+    if (taskIndex === undefined) return;
+
+    const currentTask = tasks[taskIndex];
+    if (currentTask.bucket === bucket && currentTask.orderIndex === orderIndex) return;
+
+    tasks[taskIndex] = {
+      ...currentTask,
+      bucket,
+      orderIndex,
+      updatedAt: now,
+    };
+    changed = true;
+  });
+
+  return changed;
+}
+
+function resequenceVisibleTasks(tasks: Task[], bucket: Bucket, now: string): boolean {
+  return applyTaskOrdering(tasks, bucket, getOrderedVisibleTasks(tasks, bucket), now);
 }
 
 function archiveTaskForHighlight(tasks: Task[], taskId: string): boolean {
@@ -579,12 +616,14 @@ function archiveTaskForHighlight(tasks: Task[], taskId: string): boolean {
 
   const task = tasks[idx];
   if (task.status === 'archived') return false;
+  const now = new Date().toISOString();
 
   tasks[idx] = {
     ...task,
     status: 'archived',
-    updatedAt: new Date().toISOString(),
+    updatedAt: now,
   };
+  resequenceVisibleTasks(tasks, task.bucket, now);
 
   return true;
 }
@@ -597,12 +636,13 @@ function restoreTaskFromHighlight(tasks: Task[], taskId: string): boolean {
   const orderIndex = nextBucketOrderIndex(tasks, task.bucket, task.id);
   const shouldRestore = task.status === 'archived' || task.status !== 'todo' || task.orderIndex !== orderIndex;
   if (!shouldRestore) return false;
+  const now = new Date().toISOString();
 
   tasks[idx] = {
     ...task,
     status: 'todo',
     orderIndex,
-    updatedAt: new Date().toISOString(),
+    updatedAt: now,
   };
 
   return true;
@@ -626,18 +666,17 @@ export function saveTasks(tasks: Task[]) {
 export function getTasksByBucket(bucket: Bucket): Task[] {
   return getTasks()
     .filter(t => t.bucket === bucket && t.status !== 'archived')
-    .sort((a, b) => a.orderIndex - b.orderIndex);
+    .sort(sortTasksByOrder);
 }
 
 export function createTask(title: string, bucket: Bucket): Task {
   const tasks = getTasks();
-  const bucketTasks = tasks.filter(t => t.bucket === bucket);
   const now = new Date().toISOString();
   const task: Task = {
     id: uuid(),
     title,
     bucket,
-    orderIndex: bucketTasks.length,
+    orderIndex: nextBucketOrderIndex(tasks, bucket),
     status: 'todo',
     createdAt: now,
     updatedAt: now,
@@ -657,7 +696,70 @@ export function updateTask(id: string, updates: Partial<Task>): Task | null {
 }
 
 export function archiveTask(id: string) {
-  updateTask(id, { status: 'archived' });
+  const tasks = getTasks();
+  const idx = tasks.findIndex(task => task.id === id);
+  if (idx === -1) return;
+
+  const task = tasks[idx];
+  if (task.status === 'archived') return;
+
+  const now = new Date().toISOString();
+  tasks[idx] = {
+    ...task,
+    status: 'archived',
+    updatedAt: now,
+  };
+  resequenceVisibleTasks(tasks, task.bucket, now);
+  saveTasks(tasks);
+}
+
+export function moveTask(id: string, targetBucket: Bucket, targetIndex: number): Task | null {
+  const tasks = getTasks();
+  const taskIndex = tasks.findIndex(task => task.id === id);
+  if (taskIndex === -1) return null;
+
+  const task = tasks[taskIndex];
+  if (task.status === 'archived') return task;
+
+  const sourceBucket = task.bucket;
+  const sourceTasks = getOrderedVisibleTasks(tasks, sourceBucket);
+  const sourceIndex = sourceTasks.findIndex(sourceTask => sourceTask.id === id);
+  if (sourceIndex === -1) return task;
+
+  const targetTasks = sourceBucket === targetBucket
+    ? sourceTasks.slice()
+    : getOrderedVisibleTasks(tasks, targetBucket);
+  const clampedTargetIndex = Math.max(0, Math.min(targetIndex, targetTasks.length));
+  const insertionIndex = sourceBucket === targetBucket && clampedTargetIndex > sourceIndex
+    ? clampedTargetIndex - 1
+    : clampedTargetIndex;
+
+  const remainingSourceTasks = sourceTasks.filter(sourceTask => sourceTask.id !== id);
+  const nextTargetTasks = sourceBucket === targetBucket
+    ? remainingSourceTasks
+    : targetTasks.slice();
+
+  nextTargetTasks.splice(
+    Math.max(0, Math.min(insertionIndex, nextTargetTasks.length)),
+    0,
+    { ...task, bucket: targetBucket }
+  );
+
+  const now = new Date().toISOString();
+  let changed = false;
+
+  if (sourceBucket !== targetBucket) {
+    changed = applyTaskOrdering(tasks, sourceBucket, remainingSourceTasks, now) || changed;
+  }
+
+  changed = applyTaskOrdering(tasks, targetBucket, nextTargetTasks, now) || changed;
+
+  if (!changed) {
+    return tasks[taskIndex];
+  }
+
+  saveTasks(tasks);
+  return tasks[taskIndex];
 }
 
 export function deleteTask(id: string): boolean {
@@ -665,7 +767,9 @@ export function deleteTask(id: string): boolean {
   const idx = tasks.findIndex(t => t.id === id);
   if (idx === -1) return false;
 
+  const deletedTask = tasks[idx];
   tasks.splice(idx, 1);
+  resequenceVisibleTasks(tasks, deletedTask.bucket, new Date().toISOString());
   saveTasks(tasks);
 
   enqueueCloudWrite(async () => {
