@@ -10,6 +10,7 @@ import ReflectPage from "@/pages/Reflect";
 import SettingsPage from "@/pages/Settings";
 import NotFound from "@/pages/NotFound";
 import OverdueHighlightPrompt from "@/components/OverdueHighlightPrompt";
+import ErrorBoundary from "@/components/ErrorBoundary";
 import { initializeCloudSync } from "@/lib/storage";
 
 const queryClient = new QueryClient();
@@ -57,14 +58,16 @@ const AppShell = () => {
 };
 
 const App = () => (
-  <QueryClientProvider client={queryClient}>
-    <TooltipProvider>
-      <Sonner />
-      <BrowserRouter>
-        <AppShell />
-      </BrowserRouter>
-    </TooltipProvider>
-  </QueryClientProvider>
+  <ErrorBoundary>
+    <QueryClientProvider client={queryClient}>
+      <TooltipProvider>
+        <Sonner />
+        <BrowserRouter>
+          <AppShell />
+        </BrowserRouter>
+      </TooltipProvider>
+    </QueryClientProvider>
+  </ErrorBoundary>
 );
 
 export default App;

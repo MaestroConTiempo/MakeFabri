@@ -1,4 +1,4 @@
-import React, { useState, useCallback, useEffect } from 'react';
+import React, { useState, useCallback, useEffect, useRef } from 'react';
 import {
   DndContext,
   DragOverlay,
@@ -17,7 +17,7 @@ import {
 } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
 import { format } from 'date-fns';
-import { GripVertical, MoreHorizontal, Pencil, Plus, Star } from 'lucide-react';
+import { GripVertical, MoreHorizontal, Pencil, Plus, Star, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
 import WaveHeader from '@/components/WaveHeader';
 import HighlightModal from '@/components/HighlightModal';
@@ -26,6 +26,7 @@ import { Input } from '@/components/ui/input';
 import {
   getActiveHighlight,
   getBucketNames,
+  getBucketConfigs,
   getTasksByBucket,
   createTask,
   moveTask,
@@ -33,13 +34,13 @@ import {
   updateBucketName,
   archiveTask,
   deleteTask,
-  upsertHighlight,
-  updateHighlight,
+  addCustomBucket,
+  deleteCustomBucket,
   initializeCloudSync,
 } from '@/lib/storage';
-import { getTomorrowDate, buildScheduledAt } from '@/lib/dates';
-import { syncHighlightToGoogleCalendar, hasGoogleCalendarClientId, getGoogleCalendarErrorMessage } from '@/lib/googleCalendar';
-import { Bucket, BUCKET_LABELS, BUCKET_ICONS, Task } from '@/lib/types';
+import { getTomorrowDate } from '@/lib/dates';
+import { saveHighlightWithSync, type HighlightSaveData } from '@/lib/highlightActions';
+import { BucketConfig, BUCKET_LABELS, CORE_BUCKET_IDS, Task } from '@/lib/types';
 import { cn } from '@/lib/utils';
 import {
   DropdownMenu,
@@ -49,18 +50,18 @@ import {
 } from '@/components/ui/dropdown-menu';
 import { Checkbox } from '@/components/ui/checkbox';
 
-const BUCKETS: Bucket[] = ['stove_main', 'stove_secondary', 'sink'];
+const BUCKET_ICON_OPTIONS = ['📌', '🎯', '💡', '📚', '⚡', '🎨', '🔧', '📝', '🌱', '🚀', '📦', '✨'];
 
-const getBucketContainerId = (bucket: Bucket) => `bucket:${bucket}`;
+const getBucketContainerId = (bucketId: string) => `bucket:${bucketId}`;
 
 type BucketDropData = {
   type: 'bucket';
-  bucket: Bucket;
+  bucket: string;
 };
 
 type TaskDropData = {
   type: 'task';
-  bucket: Bucket;
+  bucket: string;
   taskId: string;
 };
 
@@ -79,7 +80,7 @@ interface SortableTaskItemProps {
   onDeleteTask: (taskId: string) => void;
 }
 
-const SortableTaskItem: React.FC<SortableTaskItemProps> = ({
+const SortableTaskItem = React.memo<SortableTaskItemProps>(function SortableTaskItem({
   task,
   dragDisabled,
   isEditing,
@@ -92,7 +93,7 @@ const SortableTaskItem: React.FC<SortableTaskItemProps> = ({
   onOpenHighlight,
   onArchiveTask,
   onDeleteTask,
-}) => {
+}) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
     id: task.id,
     disabled: dragDisabled || isEditing,
@@ -148,22 +149,12 @@ const SortableTaskItem: React.FC<SortableTaskItemProps> = ({
             className="h-8 flex-1 text-sm"
             autoFocus
             onKeyDown={e => {
-              if (e.key === 'Enter') {
-                onSaveTaskEdit(task.id);
-                return;
-              }
-
-              if (e.key === 'Escape') {
-                onCancelTaskEdit();
-              }
+              if (e.key === 'Enter') { onSaveTaskEdit(task.id); return; }
+              if (e.key === 'Escape') { onCancelTaskEdit(); }
             }}
           />
-          <Button size="sm" className="h-8 px-2" onClick={() => onSaveTaskEdit(task.id)}>
-            Guardar
-          </Button>
-          <Button size="sm" variant="outline" className="h-8 px-2" onClick={onCancelTaskEdit}>
-            Cancelar
-          </Button>
+          <Button size="sm" className="h-8 px-2" onClick={() => onSaveTaskEdit(task.id)}>Guardar</Button>
+          <Button size="sm" variant="outline" className="h-8 px-2" onClick={onCancelTaskEdit}>Cancelar</Button>
         </>
       ) : (
         <>
@@ -188,12 +179,8 @@ const SortableTaskItem: React.FC<SortableTaskItemProps> = ({
               </button>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end">
-              <DropdownMenuItem onClick={() => onStartTaskEdit(task)}>
-                Editar
-              </DropdownMenuItem>
-              <DropdownMenuItem onClick={() => onArchiveTask(task.id)}>
-                Archivar
-              </DropdownMenuItem>
+              <DropdownMenuItem onClick={() => onStartTaskEdit(task)}>Editar</DropdownMenuItem>
+              <DropdownMenuItem onClick={() => onArchiveTask(task.id)}>Archivar</DropdownMenuItem>
               <DropdownMenuItem
                 className="text-destructive focus:text-destructive"
                 onClick={() => onDeleteTask(task.id)}
@@ -206,25 +193,28 @@ const SortableTaskItem: React.FC<SortableTaskItemProps> = ({
       )}
     </div>
   );
-};
+});
 
 interface BucketColumnProps {
-  bucket: Bucket;
+  bucketId: string;
   tasks: Task[];
+  bucketIcon: string;
   bucketName: string;
-  addingTo: Bucket | null;
+  bucketDefaultLabel: string;
+  isCustomBucket: boolean;
+  addingTo: string | null;
   newTitle: string;
-  editingBucketName: Bucket | null;
+  editingBucketName: string | null;
   bucketNameDraft: string;
   activeTaskId: string | null;
   dragDisabled: boolean;
   editingTaskId: string | null;
   editingTaskTitle: string;
-  onAddBucketToggle: (bucket: Bucket) => void;
+  onAddBucketToggle: (bucketId: string) => void;
   onNewTitleChange: (value: string) => void;
-  onHandleAddTask: (bucket: Bucket) => void;
+  onHandleAddTask: (bucketId: string) => void;
   onCancelAddTask: () => void;
-  onStartBucketNameEdit: (bucket: Bucket) => void;
+  onStartBucketNameEdit: (bucketId: string) => void;
   onBucketNameDraftChange: (value: string) => void;
   onSaveBucketName: () => void;
   onCancelBucketNameEdit: () => void;
@@ -236,12 +226,16 @@ interface BucketColumnProps {
   onOpenHighlight: (task: Task) => void;
   onArchiveTask: (taskId: string) => void;
   onDeleteTask: (taskId: string) => void;
+  onDeleteBucket?: () => void;
 }
 
-const BucketColumn: React.FC<BucketColumnProps> = ({
-  bucket,
+const BucketColumn = React.memo<BucketColumnProps>(function BucketColumn({
+  bucketId,
   tasks,
+  bucketIcon,
   bucketName,
+  bucketDefaultLabel,
+  isCustomBucket,
   addingTo,
   newTitle,
   editingBucketName,
@@ -266,14 +260,14 @@ const BucketColumn: React.FC<BucketColumnProps> = ({
   onOpenHighlight,
   onArchiveTask,
   onDeleteTask,
-}) => {
+  onDeleteBucket,
+}) {
   const { isOver, setNodeRef } = useDroppable({
-    id: getBucketContainerId(bucket),
-    data: {
-      type: 'bucket',
-      bucket,
-    } satisfies BucketDropData,
+    id: getBucketContainerId(bucketId),
+    data: { type: 'bucket', bucket: bucketId } satisfies BucketDropData,
   });
+
+  const displayName = bucketName || bucketDefaultLabel;
 
   return (
     <div
@@ -284,88 +278,76 @@ const BucketColumn: React.FC<BucketColumnProps> = ({
       )}
     >
       <div className="mb-3 flex items-center justify-between">
-        <h2 className="flex items-center gap-1.5 text-sm font-bold font-display">
-          <span className="text-lg">{BUCKET_ICONS[bucket]}</span>
-          <span>{BUCKET_LABELS[bucket]}</span>
-          {bucketName && (
-            <span className="text-xs font-medium text-muted-foreground">
-              - {bucketName}
-            </span>
+        <h2 className="flex items-center gap-1.5 text-sm font-bold font-display min-w-0">
+          <span className="text-lg flex-shrink-0">{bucketIcon}</span>
+          {editingBucketName === bucketId ? null : (
+            <button
+              type="button"
+              className="truncate hover:underline text-left font-bold"
+              onClick={() => onStartBucketNameEdit(bucketId)}
+              title="Editar nombre"
+            >
+              {displayName}
+            </button>
           )}
-          <span className="text-xs font-normal text-muted-foreground">({tasks.length})</span>
+          <span className="text-xs font-normal text-muted-foreground flex-shrink-0">({tasks.length})</span>
         </h2>
-        <div className="flex items-center gap-1">
+        <div className="flex items-center gap-1 flex-shrink-0">
           <Button
             variant="ghost"
             size="sm"
             className="h-8 w-8 p-0"
-            onClick={() => onStartBucketNameEdit(bucket)}
-            title="Renombrar fogon"
-          >
-            <Pencil size={14} />
-          </Button>
-          <Button
-            variant="ghost"
-            size="sm"
-            className="h-8 w-8 p-0"
-            onClick={() => onAddBucketToggle(bucket)}
+            onClick={() => onAddBucketToggle(bucketId)}
           >
             <Plus size={18} />
           </Button>
+          {isCustomBucket && onDeleteBucket && (
+            <Button
+              variant="ghost"
+              size="sm"
+              className="h-8 w-8 p-0 text-muted-foreground hover:text-destructive"
+              onClick={onDeleteBucket}
+              title="Eliminar fogon"
+            >
+              <Trash2 size={14} />
+            </Button>
+          )}
         </div>
       </div>
 
-      {editingBucketName === bucket && (
+      {editingBucketName === bucketId && (
         <div className="mb-3 flex gap-2">
           <Input
             value={bucketNameDraft}
             onChange={e => onBucketNameDraftChange(e.target.value)}
-            placeholder="Nombre del fogon..."
+            placeholder={bucketDefaultLabel}
             onKeyDown={e => {
-              if (e.key === 'Enter') {
-                onSaveBucketName();
-                return;
-              }
-
-              if (e.key === 'Escape') {
-                onCancelBucketNameEdit();
-              }
+              if (e.key === 'Enter') { onSaveBucketName(); return; }
+              if (e.key === 'Escape') { onCancelBucketNameEdit(); }
             }}
             onBlur={onSaveBucketName}
             autoFocus
             className="h-9 text-sm"
           />
-          <Button size="sm" onClick={onSaveBucketName} className="h-9 bg-primary px-3">
-            OK
-          </Button>
+          <Button size="sm" onClick={onSaveBucketName} className="h-9 bg-primary px-3">OK</Button>
         </div>
       )}
 
-      {addingTo === bucket && (
+      {addingTo === bucketId && (
         <div className="mb-3 flex gap-2">
           <Input
             value={newTitle}
             onChange={e => onNewTitleChange(e.target.value)}
             placeholder="Nueva tarea..."
             onKeyDown={e => {
-              if (e.key === 'Enter') {
-                onHandleAddTask(bucket);
-                return;
-              }
-
-              if (e.key === 'Escape') {
-                onCancelAddTask();
-              }
+              if (e.key === 'Enter') { onHandleAddTask(bucketId); return; }
+              if (e.key === 'Escape') { onCancelAddTask(); }
             }}
-            onBlur={() => {
-              if (!newTitle.trim()) {
-                onCancelAddTask();
-              }
-            }}
+            onBlur={() => { if (!newTitle.trim()) onCancelAddTask(); }}
             autoFocus
             className="h-9 text-sm"
           />
-          <Button size="sm" onClick={() => onHandleAddTask(bucket)} className="h-9 bg-primary px-3">
+          <Button size="sm" onClick={() => onHandleAddTask(bucketId)} className="h-9 bg-primary px-3">
             <Plus size={16} />
           </Button>
         </div>
@@ -373,7 +355,7 @@ const BucketColumn: React.FC<BucketColumnProps> = ({
 
       <SortableContext items={tasks.map(task => task.id)} strategy={verticalListSortingStrategy}>
         <div className="min-h-8 space-y-1">
-          {tasks.length === 0 && addingTo !== bucket ? (
+          {tasks.length === 0 && addingTo !== bucketId ? (
             <div
               className={cn(
                 'rounded-lg border border-dashed px-3 py-6 text-center text-xs text-muted-foreground transition-colors',
@@ -405,116 +387,120 @@ const BucketColumn: React.FC<BucketColumnProps> = ({
       </SortableContext>
     </div>
   );
-};
+});
 
 const FogonsPage: React.FC = () => {
   const [, setRefresh] = useState(0);
-  const [addingTo, setAddingTo] = useState<Bucket | null>(null);
+  const [bucketConfigs, setBucketConfigs] = useState<BucketConfig[]>(() => getBucketConfigs());
+  const [addingTo, setAddingTo] = useState<string | null>(null);
   const [newTitle, setNewTitle] = useState('');
-  const [bucketNames, setBucketNames] = useState(getBucketNames);
-  const [editingBucketName, setEditingBucketName] = useState<Bucket | null>(null);
+  const [bucketNames, setBucketNames] = useState(() => getBucketNames());
+  const [editingBucketName, setEditingBucketName] = useState<string | null>(null);
   const [bucketNameDraft, setBucketNameDraft] = useState('');
   const [editingTaskId, setEditingTaskId] = useState<string | null>(null);
   const [editingTaskTitle, setEditingTaskTitle] = useState('');
+  const editingTaskTitleRef = useRef(editingTaskTitle);
   const [activeTaskId, setActiveTaskId] = useState<string | null>(null);
   const [highlightModal, setHighlightModal] = useState<{ open: boolean; task?: Task }>({ open: false });
 
+  // New bucket form state
+  const [addingNewBucket, setAddingNewBucket] = useState(false);
+  const [newBucketName, setNewBucketName] = useState('');
+  const [newBucketIcon, setNewBucketIcon] = useState('📌');
+
   const sensors = useSensors(
-    useSensor(PointerSensor, {
-      activationConstraint: { distance: 6 },
-    })
+    useSensor(PointerSensor, { activationConstraint: { distance: 6 } })
   );
 
   const tomorrowDate = getTomorrowDate();
   const activeHighlight = getActiveHighlight();
   const tomorrowHighlight = activeHighlight?.date === tomorrowDate ? activeHighlight : undefined;
-  const tasksByBucket: Record<Bucket, Task[]> = {
-    stove_main: getTasksByBucket('stove_main'),
-    stove_secondary: getTasksByBucket('stove_secondary'),
-    sink: getTasksByBucket('sink'),
-  };
-  const visibleTasks = BUCKETS.flatMap(bucket => tasksByBucket[bucket]);
+
+  const tasksByBucket: Record<string, Task[]> = {};
+  for (const config of bucketConfigs) {
+    tasksByBucket[config.id] = getTasksByBucket(config.id);
+  }
+
+  const visibleTasks = bucketConfigs.flatMap(config => tasksByBucket[config.id]);
   const activeTask = activeTaskId ? visibleTasks.find(task => task.id === activeTaskId) : undefined;
   const dragDisabled = Boolean(editingTaskId) || addingTo !== null || editingBucketName !== null;
 
+  const getBucketIcon = (bucketId: string) =>
+    bucketConfigs.find(c => c.id === bucketId)?.icon ?? '📌';
+
+  const getBucketDefaultLabel = (bucketId: string) =>
+    BUCKET_LABELS[bucketId] || bucketId;
+
+  const isCustomBucket = (bucketId: string) =>
+    !(CORE_BUCKET_IDS as readonly string[]).includes(bucketId);
+
   const doRefresh = () => {
+    setBucketConfigs(getBucketConfigs());
     setBucketNames(getBucketNames());
-    setRefresh(value => value + 1);
+    setRefresh(v => v + 1);
   };
 
   useEffect(() => {
     let disposed = false;
-
     void initializeCloudSync(true).finally(() => {
       if (!disposed) doRefresh();
     });
-
-    return () => {
-      disposed = true;
-    };
+    return () => { disposed = true; };
   }, []);
 
-  const handleAddTask = (bucket: Bucket) => {
-    if (!newTitle.trim()) {
-      setAddingTo(null);
-      setNewTitle('');
-      return;
-    }
-
-    createTask(newTitle.trim(), bucket);
+  const handleAddTask = (bucketId: string) => {
+    if (!newTitle.trim()) { setAddingTo(null); setNewTitle(''); return; }
+    createTask(newTitle.trim(), bucketId);
     setNewTitle('');
     setAddingTo(null);
-    doRefresh();
+    setRefresh(v => v + 1);
   };
 
-  const cancelAddTask = () => {
-    setAddingTo(null);
+  const cancelAddTask = () => { setAddingTo(null); setNewTitle(''); };
+
+  const toggleAddTaskInput = (bucketId: string) => {
+    setAddingTo(addingTo === bucketId ? null : bucketId);
     setNewTitle('');
   };
 
-  const toggleAddTaskInput = (bucket: Bucket) => {
-    setAddingTo(addingTo === bucket ? null : bucket);
-    setNewTitle('');
-  };
+  const handleEditingTaskTitleChange = useCallback((v: string) => {
+    editingTaskTitleRef.current = v;
+    setEditingTaskTitle(v);
+  }, []);
 
-  const toggleTaskStatus = (task: Task) => {
+  const toggleTaskStatus = useCallback((task: Task) => {
     const newStatus = task.status === 'done' ? 'todo' : 'done';
     updateTask(task.id, { status: newStatus });
-    doRefresh();
-  };
+    setRefresh(v => v + 1);
+  }, []);
 
-  const startTaskEdit = (task: Task) => {
+  const startTaskEdit = useCallback((task: Task) => {
+    editingTaskTitleRef.current = task.title;
     setEditingTaskId(task.id);
     setEditingTaskTitle(task.title);
-  };
+  }, []);
 
-  const cancelTaskEdit = () => {
+  const cancelTaskEdit = useCallback(() => {
     setEditingTaskId(null);
     setEditingTaskTitle('');
-  };
+  }, []);
 
-  const saveTaskEdit = (taskId: string) => {
-    const title = editingTaskTitle.trim();
-    if (!title) {
-      cancelTaskEdit();
-      return;
-    }
-
+  const saveTaskEdit = useCallback((taskId: string) => {
+    const title = editingTaskTitleRef.current.trim();
+    if (!title) { setEditingTaskId(null); setEditingTaskTitle(''); return; }
     updateTask(taskId, { title });
-    cancelTaskEdit();
-    doRefresh();
+    setEditingTaskId(null);
+    setEditingTaskTitle('');
+    setRefresh(v => v + 1);
     toast.success('Tarea actualizada');
+  }, []);
+
+  const startBucketNameEdit = (bucketId: string) => {
+    setEditingBucketName(bucketId);
+    setBucketNameDraft(bucketNames[bucketId] ?? '');
   };
 
-  const startBucketNameEdit = (bucket: Bucket) => {
-    setEditingBucketName(bucket);
-    setBucketNameDraft(bucketNames[bucket] ?? '');
-  };
-
-  const cancelBucketNameEdit = () => {
-    setEditingBucketName(null);
-    setBucketNameDraft('');
-  };
+  const cancelBucketNameEdit = () => { setEditingBucketName(null); setBucketNameDraft(''); };
 
   const saveBucketName = () => {
     if (!editingBucketName) return;
@@ -524,50 +510,46 @@ const FogonsPage: React.FC = () => {
     setBucketNameDraft('');
   };
 
-  const openHighlightModal = (task: Task) => {
+  const openHighlightModal = useCallback((task: Task) => {
     setHighlightModal({ open: true, task });
-  };
+  }, []);
 
-  const handleArchiveTask = (taskId: string) => {
+  const handleArchiveTask = useCallback((taskId: string) => {
     archiveTask(taskId);
-    doRefresh();
-  };
+    setRefresh(v => v + 1);
+  }, []);
 
-  const handleDeleteTask = (taskId: string) => {
+  const handleDeleteTask = useCallback((taskId: string) => {
     deleteTask(taskId);
-    doRefresh();
-  };
+    setRefresh(v => v + 1);
+  }, []);
 
   const handleHighlightSave = useCallback(
-    async (data: { date: string; title: string; time: string; durationMinutes: number; remindBeforeMinutes: number; taskId?: string }) => {
-      await initializeCloudSync(true);
-
-      const savedHighlight = upsertHighlight({
-        date: data.date,
-        taskId: data.taskId,
-        title: data.title,
-        scheduledAt: buildScheduledAt(data.date, data.time),
-        durationMinutes: data.durationMinutes,
-        remindBeforeMinutes: data.remindBeforeMinutes,
-      });
-
-      if (hasGoogleCalendarClientId()) {
-        try {
-          const synced = await syncHighlightToGoogleCalendar(savedHighlight);
-          updateHighlight(savedHighlight.id, {
-            googleCalendarEventId: synced.eventId,
-            googleCalendarEventLink: synced.eventLink,
-          });
-          toast.success('Highlight sincronizado con Google Calendar');
-        } catch (error) {
-          toast.error(`Highlight guardado, pero no se pudo sincronizar. ${getGoogleCalendarErrorMessage(error)}`);
-        }
-      }
-
-      doRefresh();
+    async (data: HighlightSaveData) => {
+      await saveHighlightWithSync(data);
+      setBucketNames(getBucketNames());
+      setRefresh(v => v + 1);
     },
     []
   );
+
+  const handleAddBucket = () => {
+    if (!newBucketName.trim()) { setAddingNewBucket(false); return; }
+    addCustomBucket(newBucketName.trim(), newBucketIcon);
+    setNewBucketName('');
+    setNewBucketIcon('📌');
+    setAddingNewBucket(false);
+    doRefresh();
+    toast.success('Fogon añadido');
+  };
+
+  const handleDeleteBucket = (bucketId: string) => {
+    const deleted = deleteCustomBucket(bucketId);
+    if (deleted) {
+      doRefresh();
+      toast.success('Fogon eliminado. Las tareas se movieron al fogon principal.');
+    }
+  };
 
   const handleDragStart = ({ active }: DragStartEvent) => {
     setActiveTaskId(String(active.id));
@@ -575,7 +557,6 @@ const FogonsPage: React.FC = () => {
 
   const handleDragEnd = ({ active, over }: DragEndEvent) => {
     setActiveTaskId(null);
-
     if (!over) return;
 
     const movedTaskId = String(active.id);
@@ -583,18 +564,16 @@ const FogonsPage: React.FC = () => {
     if (!currentTask) return;
 
     const overData = over.data.current as BucketDropData | TaskDropData | undefined;
-    let targetBucket: Bucket | null = null;
+    let targetBucket: string | null = null;
     let targetIndex = 0;
 
     if (overData?.type === 'bucket') {
       targetBucket = overData.bucket;
-      targetIndex = tasksByBucket[targetBucket].length;
+      targetIndex = tasksByBucket[targetBucket]?.length ?? 0;
     } else if (overData?.type === 'task') {
       targetBucket = overData.bucket;
-      targetIndex = tasksByBucket[targetBucket].findIndex(task => task.id === overData.taskId);
-      if (targetIndex === -1) {
-        targetIndex = tasksByBucket[targetBucket].length;
-      }
+      targetIndex = (tasksByBucket[targetBucket] ?? []).findIndex(task => task.id === overData.taskId);
+      if (targetIndex === -1) targetIndex = tasksByBucket[targetBucket]?.length ?? 0;
     } else {
       return;
     }
@@ -602,10 +581,11 @@ const FogonsPage: React.FC = () => {
     const movedTask = moveTask(movedTaskId, targetBucket, targetIndex);
     if (!movedTask) return;
 
-    doRefresh();
+    setRefresh(v => v + 1);
 
     if (currentTask.bucket !== targetBucket) {
-      toast.success(`Tarea movida a ${BUCKET_LABELS[targetBucket]}`);
+      const targetLabel = bucketNames[targetBucket] || BUCKET_LABELS[targetBucket] || targetBucket;
+      toast.success(`Tarea movida a ${targetLabel}`);
     }
   };
 
@@ -642,12 +622,18 @@ const FogonsPage: React.FC = () => {
           onDragCancel={() => setActiveTaskId(null)}
         >
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2" style={{ minHeight: '65vh' }}>
-            {BUCKETS.map(bucket => (
-              <div key={bucket} className={bucket === 'stove_main' ? 'sm:row-span-2' : undefined}>
+            {bucketConfigs.map((config, index) => (
+              <div
+                key={config.id}
+                className={config.id === 'stove_main' ? 'sm:row-span-2' : undefined}
+              >
                 <BucketColumn
-                  bucket={bucket}
-                  tasks={tasksByBucket[bucket]}
-                  bucketName={bucketNames[bucket]}
+                  bucketId={config.id}
+                  tasks={tasksByBucket[config.id] ?? []}
+                  bucketIcon={config.icon}
+                  bucketName={bucketNames[config.id] ?? ''}
+                  bucketDefaultLabel={getBucketDefaultLabel(config.id)}
+                  isCustomBucket={isCustomBucket(config.id)}
                   addingTo={addingTo}
                   newTitle={newTitle}
                   editingBucketName={editingBucketName}
@@ -664,7 +650,7 @@ const FogonsPage: React.FC = () => {
                   onBucketNameDraftChange={setBucketNameDraft}
                   onSaveBucketName={saveBucketName}
                   onCancelBucketNameEdit={cancelBucketNameEdit}
-                  onEditingTaskTitleChange={setEditingTaskTitle}
+                  onEditingTaskTitleChange={handleEditingTaskTitleChange}
                   onToggleTaskStatus={toggleTaskStatus}
                   onSaveTaskEdit={saveTaskEdit}
                   onCancelTaskEdit={cancelTaskEdit}
@@ -672,6 +658,7 @@ const FogonsPage: React.FC = () => {
                   onOpenHighlight={openHighlightModal}
                   onArchiveTask={handleArchiveTask}
                   onDeleteTask={handleDeleteTask}
+                  onDeleteBucket={isCustomBucket(config.id) ? () => handleDeleteBucket(config.id) : undefined}
                 />
               </div>
             ))}
@@ -680,9 +667,7 @@ const FogonsPage: React.FC = () => {
           <DragOverlay>
             {activeTask ? (
               <div className="flex items-center gap-2 rounded-lg border bg-card px-3 py-2 text-sm shadow-lg">
-                <span className="text-muted-foreground">
-                  {BUCKET_ICONS[activeTask.bucket]}
-                </span>
+                <span className="text-muted-foreground">{getBucketIcon(activeTask.bucket)}</span>
                 <span className={cn(activeTask.status === 'done' && 'line-through text-muted-foreground')}>
                   {activeTask.title}
                 </span>
@@ -690,6 +675,52 @@ const FogonsPage: React.FC = () => {
             ) : null}
           </DragOverlay>
         </DndContext>
+
+        {/* Add new bucket */}
+        {addingNewBucket ? (
+          <div className="mt-4 rounded-lg border p-4 space-y-3">
+            <p className="text-sm font-medium">Nuevo fogon</p>
+            <div className="flex flex-wrap gap-2">
+              {BUCKET_ICON_OPTIONS.map(icon => (
+                <button
+                  key={icon}
+                  type="button"
+                  onClick={() => setNewBucketIcon(icon)}
+                  className={cn(
+                    'text-xl p-1 rounded transition-colors',
+                    newBucketIcon === icon ? 'bg-primary/20 ring-1 ring-primary' : 'hover:bg-muted'
+                  )}
+                >
+                  {icon}
+                </button>
+              ))}
+            </div>
+            <div className="flex gap-2">
+              <Input
+                value={newBucketName}
+                onChange={e => setNewBucketName(e.target.value)}
+                placeholder="Nombre del fogon..."
+                autoFocus
+                onKeyDown={e => {
+                  if (e.key === 'Enter') handleAddBucket();
+                  if (e.key === 'Escape') setAddingNewBucket(false);
+                }}
+                className="h-9 text-sm"
+              />
+              <Button size="sm" onClick={handleAddBucket} className="h-9">Añadir</Button>
+              <Button size="sm" variant="ghost" onClick={() => setAddingNewBucket(false)} className="h-9">Cancelar</Button>
+            </div>
+          </div>
+        ) : (
+          <Button
+            variant="outline"
+            onClick={() => setAddingNewBucket(true)}
+            className="mt-4 w-full gap-2"
+          >
+            <Plus size={16} />
+            Añadir fogon
+          </Button>
+        )}
       </div>
 
       <HighlightModal

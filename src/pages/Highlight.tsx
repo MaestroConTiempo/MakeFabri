@@ -4,36 +4,22 @@ import { Download, ExternalLink } from 'lucide-react';
 import { toast } from 'sonner';
 import WaveHeader from '@/components/WaveHeader';
 import HighlightModal from '@/components/HighlightModal';
+import HighlightReviewDialog from '@/components/HighlightReviewDialog';
 import { Button } from '@/components/ui/button';
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogHeader,
-  DialogTitle,
-} from '@/components/ui/dialog';
 import {
   getActiveHighlight,
   initializeCloudSync,
   markHighlightNotDone,
   setHighlightCompletion,
   updateHighlight,
-  upsertHighlight,
 } from '@/lib/storage';
 import { buildScheduledAt, getTodayDate, getTomorrowDate } from '@/lib/dates';
 import { downloadICS, generateGoogleCalendarUrl } from '@/lib/calendar';
-import {
-  getGoogleCalendarErrorMessage,
-  hasGoogleCalendarClientId,
-  syncHighlightToGoogleCalendar,
-} from '@/lib/googleCalendar';
-
-type ReviewStep = 'done-question' | 'keep-question';
+import { saveHighlightWithSync, type HighlightSaveData } from '@/lib/highlightActions';
 
 const HighlightPage: React.FC = () => {
   const [modalOpen, setModalOpen] = useState(false);
   const [reviewOpen, setReviewOpen] = useState(false);
-  const [reviewStep, setReviewStep] = useState<ReviewStep>('done-question');
   const [, setRefresh] = useState(0);
 
   const todayDate = getTodayDate();
@@ -41,6 +27,13 @@ const HighlightPage: React.FC = () => {
   const highlight = getActiveHighlight();
   const isTodayHighlight = Boolean(highlight && highlight.date === todayDate);
   const isTomorrowHighlight = Boolean(highlight && highlight.date === tomorrowDate);
+
+  useEffect(() => {
+    // Re-render instantly when highlights change from any component (e.g. OverdueHighlightPrompt)
+    const onHighlightsChanged = () => setRefresh(r => r + 1);
+    window.addEventListener('mt:highlights-changed', onHighlightsChanged);
+    return () => window.removeEventListener('mt:highlights-changed', onHighlightsChanged);
+  }, []);
 
   useEffect(() => {
     let disposed = false;
@@ -62,31 +55,8 @@ const HighlightPage: React.FC = () => {
   }, []);
 
   const handleSave = useCallback(
-    async (data: { date: string; title: string; time: string; durationMinutes: number; remindBeforeMinutes: number; taskId?: string }) => {
-      await initializeCloudSync(true);
-
-      const savedHighlight = upsertHighlight({
-        date: data.date,
-        taskId: data.taskId,
-        title: data.title,
-        scheduledAt: buildScheduledAt(data.date, data.time),
-        durationMinutes: data.durationMinutes,
-        remindBeforeMinutes: data.remindBeforeMinutes,
-      });
-
-      if (hasGoogleCalendarClientId()) {
-        try {
-          const synced = await syncHighlightToGoogleCalendar(savedHighlight);
-          updateHighlight(savedHighlight.id, {
-            googleCalendarEventId: synced.eventId,
-            googleCalendarEventLink: synced.eventLink,
-          });
-          toast.success('Highlight sincronizado con Google Calendar');
-        } catch (error) {
-          toast.error(`Highlight guardado, pero no se pudo sincronizar. ${getGoogleCalendarErrorMessage(error)}`);
-        }
-      }
-
+    async (data: HighlightSaveData) => {
+      await saveHighlightWithSync(data);
       setRefresh(r => r + 1);
     },
     []
@@ -102,7 +72,6 @@ const HighlightPage: React.FC = () => {
 
   const openReviewDialog = () => {
     if (!highlight || !isTodayHighlight) return;
-    setReviewStep('done-question');
     setReviewOpen(true);
   };
 
@@ -112,10 +81,6 @@ const HighlightPage: React.FC = () => {
     toast.success('Perfecto. Se marco como realizado y quedo en el historial.');
     setReviewOpen(false);
     setRefresh(r => r + 1);
-  };
-
-  const handleDoneNo = () => {
-    setReviewStep('keep-question');
   };
 
   const handleKeepForTomorrow = () => {
@@ -214,40 +179,20 @@ const HighlightPage: React.FC = () => {
         willReplaceExisting
       />
 
-      <Dialog open={reviewOpen} onOpenChange={setReviewOpen}>
-        <DialogContent className="max-w-sm mx-auto">
-          <DialogHeader>
-            <DialogTitle className="font-display">Estado del Highlight</DialogTitle>
-            {highlight && (
-              <DialogDescription>
-                {highlight.title} ({format(new Date(highlight.scheduledAt), 'HH:mm')})
-              </DialogDescription>
-            )}
-          </DialogHeader>
-
-          {reviewStep === 'done-question' ? (
-            <div className="space-y-3">
-              <p className="text-sm">Lo realizaste ya?</p>
-              <Button className="w-full" onClick={handleDoneYes}>
-                Si, lo realice
-              </Button>
-              <Button variant="outline" className="w-full" onClick={handleDoneNo}>
-                No lo realice
-              </Button>
-            </div>
-          ) : (
-            <div className="space-y-3">
-              <p className="text-sm">Quieres mantenerlo para manana o enviarlo al historial como no hecho?</p>
-              <Button className="w-full" onClick={handleKeepForTomorrow}>
-                Mantener para manana
-              </Button>
-              <Button variant="outline" className="w-full" onClick={handleSendToHistoryNotDone}>
-                Enviar a historial (no hecho)
-              </Button>
-            </div>
-          )}
-        </DialogContent>
-      </Dialog>
+      {highlight && isTodayHighlight && (
+        <HighlightReviewDialog
+          open={reviewOpen}
+          onOpenChange={setReviewOpen}
+          highlight={highlight}
+          title="Estado del Highlight"
+          step1Question="Lo realizaste ya?"
+          step2Question="Quieres mantenerlo para manana o enviarlo al historial como no hecho?"
+          keepButtonLabel="Mantener para manana"
+          onDone={handleDoneYes}
+          onKeep={handleKeepForTomorrow}
+          onNotDone={handleSendToHistoryNotDone}
+        />
+      )}
     </div>
   );
 };

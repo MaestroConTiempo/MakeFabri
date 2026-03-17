@@ -4,8 +4,10 @@ import {
   AppSettings,
   DEFAULT_SETTINGS,
   Bucket,
+  BucketConfig,
   BucketNames,
-  DEFAULT_BUCKET_NAMES,
+  CORE_BUCKET_IDS,
+  DEFAULT_CORE_BUCKETS,
 } from './types';
 import { v4 as uuid } from 'uuid';
 import { hasSupabaseConfig, supabase } from './supabase';
@@ -15,6 +17,7 @@ const KEYS = {
   highlights: 'mt_highlights',
   settings: 'mt_settings',
   bucketNames: 'mt_bucket_names',
+  bucketConfigs: 'mt_bucket_configs',
 };
 
 const TABLES = {
@@ -95,6 +98,11 @@ let suppressCloudWrites = false;
 let cachedCloudUserId: string | null = null;
 let cloudUserPromise: Promise<string | null> | null = null;
 
+// Module-level cache to avoid repeated JSON.parse on every getTasks/getHighlights call
+let tasksCache: Task[] | null = null;
+let highlightsCache: DailyHighlight[] | null = null;
+let bucketConfigsCache: BucketConfig[] | null = null;
+
 function setCloudSyncStatus(status: CloudSyncStatus, message: string) {
   cloudSyncStatus = status;
   cloudSyncMessage = message;
@@ -120,10 +128,13 @@ function readJSON<T>(key: string, fallback: T): T {
 
 function writeTasksLocal(tasks: Task[]) {
   localStorage.setItem(KEYS.tasks, JSON.stringify(tasks));
+  tasksCache = tasks;
 }
 
 function writeHighlightsLocal(highlights: DailyHighlight[]) {
   localStorage.setItem(KEYS.highlights, JSON.stringify(highlights));
+  highlightsCache = highlights;
+  window.dispatchEvent(new CustomEvent('mt:highlights-changed'));
 }
 
 function writeSettingsLocal(settings: AppSettings) {
@@ -142,9 +153,7 @@ function isDefaultSettings(settings: AppSettings): boolean {
 }
 
 function isDefaultBucketNames(bucketNames: BucketNames): boolean {
-  return bucketNames.stove_main.trim() === ''
-    && bucketNames.stove_secondary.trim() === ''
-    && bucketNames.sink.trim() === '';
+  return Object.values(bucketNames).every(name => !name || name.trim() === '');
 }
 
 function toTaskRow(task: Task, userId: string): TaskRow {
@@ -310,9 +319,9 @@ function fromSettingsRow(row: SettingsRow): AppSettings {
 function toBucketNamesRow(bucketNames: BucketNames): BucketNamesRow {
   return {
     id: SHARED_BUCKET_NAMES_ROW_ID,
-    stove_main_name: bucketNames.stove_main,
-    stove_secondary_name: bucketNames.stove_secondary,
-    sink_name: bucketNames.sink,
+    stove_main_name: bucketNames['stove_main'] ?? '',
+    stove_secondary_name: bucketNames['stove_secondary'] ?? '',
+    sink_name: bucketNames['sink'] ?? '',
     updated_at: new Date().toISOString(),
   };
 }
@@ -650,7 +659,9 @@ function restoreTaskFromHighlight(tasks: Task[], taskId: string): boolean {
 
 // Tasks
 export function getTasks(): Task[] {
-  return readJSON<Task[]>(KEYS.tasks, []);
+  if (tasksCache !== null) return tasksCache;
+  tasksCache = readJSON<Task[]>(KEYS.tasks, []);
+  return tasksCache;
 }
 
 export function saveTasks(tasks: Task[]) {
@@ -783,8 +794,10 @@ export function deleteTask(id: string): boolean {
 
 // Highlights
 export function getHighlights(): DailyHighlight[] {
-  const highlights = readJSON<DailyHighlight[]>(KEYS.highlights, []);
-  return enforceSingleActiveHighlight(normalizeHighlights(highlights));
+  if (highlightsCache !== null) return highlightsCache;
+  const raw = readJSON<DailyHighlight[]>(KEYS.highlights, []);
+  highlightsCache = enforceSingleActiveHighlight(normalizeHighlights(raw));
+  return highlightsCache;
 }
 
 export function saveHighlights(highlights: DailyHighlight[]) {
@@ -991,28 +1004,110 @@ export function saveSettings(settings: AppSettings) {
 
 // Bucket names
 export function getBucketNames(): BucketNames {
-  const raw = readJSON<Partial<BucketNames> | null>(KEYS.bucketNames, null);
-  return raw ? { ...DEFAULT_BUCKET_NAMES, ...raw } : { ...DEFAULT_BUCKET_NAMES };
+  return readJSON<BucketNames>(KEYS.bucketNames, {});
 }
 
 export function saveBucketNames(bucketNames: BucketNames) {
-  const normalized = { ...DEFAULT_BUCKET_NAMES, ...bucketNames };
-  writeBucketNamesLocal(normalized);
+  writeBucketNamesLocal(bucketNames);
 
   enqueueCloudWrite(async () => {
     const userId = await ensureCloudUserId();
     if (!userId) return;
-    await pushBucketNamesToCloud(normalized);
+    await pushBucketNamesToCloud(bucketNames);
   });
 }
 
-export function updateBucketName(bucket: Bucket, name: string): BucketNames {
+export function updateBucketName(bucket: string, name: string): BucketNames {
   const next = {
     ...getBucketNames(),
     [bucket]: name.trim(),
   };
   saveBucketNames(next);
   return next;
+}
+
+// Bucket configs (ordered list of buckets, including user-created ones)
+export function getBucketConfigs(): BucketConfig[] {
+  if (bucketConfigsCache !== null) return bucketConfigsCache;
+  const stored = readJSON<BucketConfig[] | null>(KEYS.bucketConfigs, null);
+  bucketConfigsCache = stored && stored.length > 0 ? stored : [...DEFAULT_CORE_BUCKETS];
+  return bucketConfigsCache;
+}
+
+function saveBucketConfigs(configs: BucketConfig[]) {
+  localStorage.setItem(KEYS.bucketConfigs, JSON.stringify(configs));
+  bucketConfigsCache = configs;
+}
+
+export function addCustomBucket(name: string, icon: string): BucketConfig {
+  const configs = getBucketConfigs();
+  const id = `custom_${uuid()}`;
+  const newConfig: BucketConfig = { id, icon };
+  const next = [...configs, newConfig];
+  saveBucketConfigs(next);
+  const names = getBucketNames();
+  saveBucketNames({ ...names, [id]: name.trim() });
+  return newConfig;
+}
+
+export function deleteCustomBucket(id: string): boolean {
+  if ((CORE_BUCKET_IDS as readonly string[]).includes(id)) return false;
+  const configs = getBucketConfigs();
+  const idx = configs.findIndex(c => c.id === id);
+  if (idx === -1) return false;
+
+  // Move tasks from deleted bucket to stove_main
+  const tasks = getTasks();
+  const now = new Date().toISOString();
+  const tasksInBucket = tasks.filter(t => t.bucket === id && t.status !== 'archived');
+  if (tasksInBucket.length > 0) {
+    const startIndex = nextBucketOrderIndex(tasks, 'stove_main');
+    tasksInBucket.forEach((task, i) => {
+      const taskIdx = tasks.findIndex(t => t.id === task.id);
+      if (taskIdx !== -1) {
+        tasks[taskIdx] = { ...tasks[taskIdx], bucket: 'stove_main', orderIndex: startIndex + i, updatedAt: now };
+      }
+    });
+    saveTasks(tasks);
+  }
+
+  const next = configs.filter(c => c.id !== id);
+  saveBucketConfigs(next);
+
+  const names = getBucketNames();
+  const { [id]: _removed, ...rest } = names;
+  saveBucketNames(rest);
+
+  return true;
+}
+
+export function returnHighlightTaskToFogon(highlightId: string, targetBucketId: string): DailyHighlight | null {
+  const highlights = getHighlights();
+  const idx = highlights.findIndex(h => h.id === highlightId);
+  if (idx === -1) return null;
+
+  const highlight = highlights[idx];
+  const now = new Date().toISOString();
+
+  highlights[idx] = { ...highlights[idx], completedAt: HIGHLIGHT_NOT_DONE_SENTINEL, updatedAt: now };
+  saveHighlights(highlights);
+
+  if (highlight.taskId) {
+    const tasks = getTasks();
+    const taskIdx = tasks.findIndex(t => t.id === highlight.taskId);
+    if (taskIdx !== -1) {
+      const task = tasks[taskIdx];
+      const originalBucket = task.bucket;
+      const orderIndex = nextBucketOrderIndex(tasks, targetBucketId, task.id);
+      tasks[taskIdx] = { ...task, bucket: targetBucketId, status: 'todo', orderIndex, updatedAt: now };
+      if (originalBucket !== targetBucketId) {
+        resequenceVisibleTasks(tasks, originalBucket, now);
+      }
+      saveTasks(tasks);
+    }
+  }
+
+  return highlights[idx];
 }
 
 // Cloud bootstrap
@@ -1089,11 +1184,10 @@ export async function initializeCloudSync(force = false) {
     }
 
     if (remoteBucketNames) {
-      writeBucketNamesLocal(remoteBucketNames);
+      // Merge: remote core names win, but keep local custom bucket names
+      writeBucketNamesLocal({ ...localBucketNames, ...remoteBucketNames });
     } else if (localHasBucketNames) {
       await pushBucketNamesToCloud(localBucketNames);
-    } else {
-      writeBucketNamesLocal({ ...DEFAULT_BUCKET_NAMES });
     }
 
     setCloudSyncStatus('ready', 'Sincronizacion con Supabase activa');
@@ -1117,10 +1211,28 @@ export function exportAllData(): string {
 
 export function importAllData(json: string) {
   const data = JSON.parse(json);
-  if (data.tasks) saveTasks(data.tasks);
-  if (data.highlights) saveHighlights(data.highlights);
-  if (data.settings) saveSettings(data.settings);
-  if (data.bucketNames) saveBucketNames(data.bucketNames);
+
+  // Suppress individual cloud writes during batch import, then push everything once
+  suppressCloudWrites = true;
+  try {
+    if (data.tasks) saveTasks(data.tasks);
+    if (data.highlights) saveHighlights(data.highlights);
+    if (data.settings) saveSettings(data.settings);
+    if (data.bucketNames) saveBucketNames(data.bucketNames);
+  } finally {
+    suppressCloudWrites = false;
+  }
+
+  enqueueCloudWrite(async () => {
+    const userId = await ensureCloudUserId();
+    if (!userId) return;
+    await Promise.all([
+      pushTasksToCloud(userId, getTasks()),
+      pushHighlightsToCloud(userId, getHighlights()),
+      pushSettingsToCloud(userId, getSettings()),
+      pushBucketNamesToCloud(getBucketNames()),
+    ]);
+  });
 }
 
 export function resetAllData() {
@@ -1128,6 +1240,10 @@ export function resetAllData() {
   localStorage.removeItem(KEYS.highlights);
   localStorage.removeItem(KEYS.settings);
   localStorage.removeItem(KEYS.bucketNames);
+  localStorage.removeItem(KEYS.bucketConfigs);
+  tasksCache = null;
+  highlightsCache = null;
+  bucketConfigsCache = null;
 
   enqueueCloudWrite(async () => {
     const userId = await ensureCloudUserId();
