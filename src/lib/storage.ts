@@ -25,6 +25,7 @@ const TABLES = {
   highlights: 'mt_highlights',
   settings: 'mt_settings',
   bucketNames: 'mt_bucket_names',
+  bucketConfigs: 'mt_bucket_configs',
 };
 
 const sharedTasksMode = import.meta.env.VITE_SUPABASE_SHARED_TASKS === 'true';
@@ -143,6 +144,12 @@ function writeSettingsLocal(settings: AppSettings) {
 
 function writeBucketNamesLocal(bucketNames: BucketNames) {
   localStorage.setItem(KEYS.bucketNames, JSON.stringify(bucketNames));
+}
+
+function writeBucketConfigsLocal(configs: BucketConfig[]) {
+  localStorage.setItem(KEYS.bucketConfigs, JSON.stringify(configs));
+  bucketConfigsCache = configs;
+  window.dispatchEvent(new CustomEvent('mt:bucket-configs-changed'));
 }
 
 function isDefaultSettings(settings: AppSettings): boolean {
@@ -408,30 +415,6 @@ async function pushTasksToCloud(userId: string, tasks: Task[]) {
     if (upsertError) throw upsertError;
   }
 
-  // In shared mode we do not prune stale rows here to avoid deleting
-  // tasks created by another device that has not synced yet.
-  if (sharedTasksMode) return;
-
-  const { data: remoteRows, error: remoteError } = await supabase
-    .from(TABLES.tasks)
-    .select('id')
-    .eq('user_id', userId);
-
-  if (remoteError) throw remoteError;
-
-  const localIds = new Set(tasks.map(task => task.id));
-  const staleIds = (remoteRows || [])
-    .map(row => row.id as string)
-    .filter(id => !localIds.has(id));
-
-  if (staleIds.length > 0) {
-    const { error: deleteError } = await supabase
-      .from(TABLES.tasks)
-      .delete()
-      .eq('user_id', userId)
-      .in('id', staleIds);
-    if (deleteError) throw deleteError;
-  }
 }
 
 async function pushHighlightsToCloud(userId: string, highlights: DailyHighlight[]) {
@@ -445,30 +428,6 @@ async function pushHighlightsToCloud(userId: string, highlights: DailyHighlight[
     if (upsertError) throw upsertError;
   }
 
-  // In shared mode we avoid stale pruning to prevent one device
-  // from deleting highlights created/updated by another one.
-  if (sharedHighlightsMode) return;
-
-  const { data: remoteRows, error: remoteError } = await supabase
-    .from(TABLES.highlights)
-    .select('id')
-    .eq('user_id', userId);
-
-  if (remoteError) throw remoteError;
-
-  const localIds = new Set(highlights.map(highlight => highlight.id));
-  const staleIds = (remoteRows || [])
-    .map(row => row.id as string)
-    .filter(id => !localIds.has(id));
-
-  if (staleIds.length > 0) {
-    const { error: deleteError } = await supabase
-      .from(TABLES.highlights)
-      .delete()
-      .eq('user_id', userId)
-      .in('id', staleIds);
-    if (deleteError) throw deleteError;
-  }
 }
 
 async function pushSettingsToCloud(userId: string, settings: AppSettings) {
@@ -491,6 +450,22 @@ async function pushBucketNamesToCloud(bucketNames: BucketNames) {
   if (upsertError) {
     if (isBucketNamesTableMissing(upsertError)) return;
     throw upsertError;
+  }
+}
+
+let isBucketConfigsTableMissing = false;
+
+async function pushBucketConfigsToCloud(configs: BucketConfig[]) {
+  if (!supabase || isBucketConfigsTableMissing) return;
+  try {
+    const userId = await ensureCloudUserId();
+    if (!userId) return;
+    const { error } = await supabase
+      .from(TABLES.bucketConfigs)
+      .upsert({ user_id: userId, configs }, { onConflict: 'user_id' });
+    if (error) throw error;
+  } catch {
+    isBucketConfigsTableMissing = true;
   }
 }
 
@@ -1037,6 +1012,7 @@ export function getBucketConfigs(): BucketConfig[] {
 function saveBucketConfigs(configs: BucketConfig[]) {
   localStorage.setItem(KEYS.bucketConfigs, JSON.stringify(configs));
   bucketConfigsCache = configs;
+  enqueueCloudWrite(() => pushBucketConfigsToCloud(configs));
 }
 
 export function addCustomBucket(name: string, icon: string): BucketConfig {
@@ -1190,6 +1166,30 @@ export async function initializeCloudSync(force = false) {
       writeBucketNamesLocal({ ...localBucketNames, ...remoteBucketNames });
     } else if (localHasBucketNames) {
       await pushBucketNamesToCloud(localBucketNames);
+    }
+
+    if (!isBucketConfigsTableMissing) {
+      try {
+        const { data: remoteConfigsRow } = await supabase
+          .from(TABLES.bucketConfigs)
+          .select('configs')
+          .eq('user_id', userId)
+          .maybeSingle();
+        if (remoteConfigsRow?.configs) {
+          const remoteList = remoteConfigsRow.configs as BucketConfig[];
+          const localList = getBucketConfigs();
+          const remoteIds = new Set(remoteList.map((b: BucketConfig) => b.id));
+          const onlyLocal = localList.filter(b => !remoteIds.has(b.id));
+          writeBucketConfigsLocal([...remoteList, ...onlyLocal]);
+        } else {
+          const localConfigs = getBucketConfigs();
+          if (localConfigs.some(c => c.id.startsWith('custom_'))) {
+            await pushBucketConfigsToCloud(localConfigs);
+          }
+        }
+      } catch {
+        isBucketConfigsTableMissing = true;
+      }
     }
 
     setCloudSyncStatus('ready', 'Sincronizacion con Supabase activa');
