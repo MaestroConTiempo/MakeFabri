@@ -456,15 +456,21 @@ async function pushBucketNamesToCloud(bucketNames: BucketNames) {
 let isBucketConfigsTableMissing = false;
 
 async function pushBucketConfigsToCloud(configs: BucketConfig[]) {
-  if (!supabase || isBucketConfigsTableMissing) return;
+  if (!supabase || isBucketConfigsTableMissing) {
+    console.warn('[sync] pushBucketConfigsToCloud skipped', { supabase: !!supabase, isBucketConfigsTableMissing });
+    return;
+  }
   try {
     const userId = await ensureCloudUserId();
     if (!userId) return;
+    console.log('[sync] pushing bucket configs', configs.map(c => c.id));
     const { error } = await supabase
       .from(TABLES.bucketConfigs)
       .upsert({ user_id: userId, configs }, { onConflict: 'user_id' });
     if (error) throw error;
-  } catch {
+    console.log('[sync] bucket configs pushed ok');
+  } catch (e) {
+    console.error('[sync] pushBucketConfigsToCloud error', e);
     isBucketConfigsTableMissing = true;
   }
 }
