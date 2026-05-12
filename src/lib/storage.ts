@@ -18,7 +18,6 @@ const KEYS = {
   settings: 'mt_settings',
   bucketNames: 'mt_bucket_names',
   bucketConfigs: 'mt_bucket_configs',
-  deletedTaskIds: 'mt_deleted_task_ids',
 };
 
 const TABLES = {
@@ -27,7 +26,6 @@ const TABLES = {
   settings: 'mt_settings',
   bucketNames: 'mt_bucket_names',
   bucketConfigs: 'mt_bucket_configs',
-  deletedTaskIds: 'mt_deleted_task_ids',
 };
 
 const sharedTasksMode = import.meta.env.VITE_SUPABASE_SHARED_TASKS === 'true';
@@ -634,64 +632,6 @@ function restoreTaskFromHighlight(tasks: Task[], taskId: string): boolean {
   return true;
 }
 
-// Tombstones — track deleted task IDs so other devices don't resurrect them during merge
-const TOMBSTONE_TTL_MS = 30 * 24 * 60 * 60 * 1000; // 30 days
-
-interface TaskTombstone { id: string; deletedAt: string; }
-
-let isTombstoneTableMissing = false;
-
-function getTombstones(): TaskTombstone[] {
-  const raw = readJSON<TaskTombstone[]>(KEYS.deletedTaskIds, []);
-  const cutoff = new Date(Date.now() - TOMBSTONE_TTL_MS).toISOString();
-  return raw.filter(t => t.deletedAt > cutoff);
-}
-
-function addTombstone(id: string) {
-  const existing = getTombstones().filter(t => t.id !== id);
-  const next = [...existing, { id, deletedAt: new Date().toISOString() }];
-  localStorage.setItem(KEYS.deletedTaskIds, JSON.stringify(next));
-  enqueueCloudWrite(() => pushTombstonesToCloud(next));
-}
-
-async function pushTombstonesToCloud(tombstones: TaskTombstone[]) {
-  if (!supabase || isTombstoneTableMissing) return;
-  try {
-    const userId = await ensureCloudUserId();
-    if (!userId) return;
-    const { error } = await supabase
-      .from(TABLES.deletedTaskIds)
-      .upsert({ user_id: userId, ids: tombstones }, { onConflict: 'user_id' });
-    if (error) throw error;
-  } catch {
-    isTombstoneTableMissing = true;
-  }
-}
-
-async function fetchTombstonesFromCloud(userId: string): Promise<Set<string>> {
-  if (!supabase || isTombstoneTableMissing) return new Set();
-  try {
-    const { data } = await supabase
-      .from(TABLES.deletedTaskIds)
-      .select('ids')
-      .eq('user_id', userId)
-      .maybeSingle();
-    if (!data?.ids) return new Set();
-    const cutoff = new Date(Date.now() - TOMBSTONE_TTL_MS).toISOString();
-    const remote = (data.ids as TaskTombstone[]).filter(t => t.deletedAt > cutoff);
-    // Merge remote tombstones into local
-    const local = getTombstones();
-    const merged = [...local];
-    const localIds = new Set(local.map(t => t.id));
-    for (const t of remote) { if (!localIds.has(t.id)) merged.push(t); }
-    localStorage.setItem(KEYS.deletedTaskIds, JSON.stringify(merged));
-    return new Set(merged.map(t => t.id));
-  } catch {
-    isTombstoneTableMissing = true;
-    return new Set(getTombstones().map(t => t.id));
-  }
-}
-
 // Tasks
 export function getTasks(): Task[] {
   if (tasksCache !== null) return tasksCache;
@@ -817,7 +757,6 @@ export function deleteTask(id: string): boolean {
   tasks.splice(idx, 1);
   resequenceVisibleTasks(tasks, deletedTask.bucket, new Date().toISOString());
   saveTasks(tasks);
-  addTombstone(id);
 
   enqueueCloudWrite(async () => {
     const userId = await ensureCloudUserId();
@@ -1189,8 +1128,6 @@ export async function initializeCloudSync(force = false) {
         .maybeSingle(),
     ]);
 
-    const deletedIds = await fetchTombstonesFromCloud(userId);
-
     if (tasksResult.error) throw tasksResult.error;
     if (highlightsResult.error) throw highlightsResult.error;
     if (settingsResult.error) throw settingsResult.error;
@@ -1211,9 +1148,7 @@ export async function initializeCloudSync(force = false) {
     suppressCloudWrites = true;
 
     if (remoteHasData) {
-      const remoteTaskIds = new Set(remoteTasks.map(t => t.id));
-      const localOnlyTasks = localTasks.filter(t => !remoteTaskIds.has(t.id) && !deletedIds.has(t.id));
-      writeTasksLocal([...remoteTasks, ...localOnlyTasks]);
+      writeTasksLocal(remoteTasks);
       writeHighlightsLocal(enforceSingleActiveHighlight(normalizeHighlights(remoteHighlights)));
       writeSettingsLocal(remoteSettings || { ...DEFAULT_SETTINGS });
     } else if (localHasData) {
