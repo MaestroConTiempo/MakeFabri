@@ -1172,23 +1172,28 @@ export async function initializeCloudSync(force = false) {
       await pushBucketNamesToCloud(localBucketNames);
     }
 
+    console.log('[sync] bucket configs fetch — isMissing:', isBucketConfigsTableMissing, 'userId:', userId);
     if (!isBucketConfigsTableMissing) {
       try {
-        const { data: remoteConfigsRow } = await supabase
+        const { data: remoteConfigsRow, error: configsError } = await supabase
           .from(TABLES.bucketConfigs)
           .select('configs')
           .eq('user_id', userId)
           .maybeSingle();
+        console.log('[sync] bucket configs remote row:', remoteConfigsRow, 'error:', configsError);
         if (remoteConfigsRow?.configs) {
           const remoteList = remoteConfigsRow.configs as BucketConfig[];
+          console.log('[sync] writing remote configs:', remoteList.map(c => c.id));
           writeBucketConfigsLocal(remoteList);
         } else {
           const localConfigs = getBucketConfigs();
+          console.log('[sync] no remote configs, local:', localConfigs.map(c => c.id));
           if (localConfigs.some(c => c.id.startsWith('custom_'))) {
             await pushBucketConfigsToCloud(localConfigs);
           }
         }
-      } catch {
+      } catch (e) {
+        console.error('[sync] bucket configs fetch error:', e);
         isBucketConfigsTableMissing = true;
       }
     }
