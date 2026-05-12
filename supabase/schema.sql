@@ -18,7 +18,7 @@ create table if not exists public.mt_tasks (
   user_id uuid not null references auth.users(id) on delete cascade,
   title text not null,
   notes text null,
-  bucket text not null check (bucket in ('stove_main', 'stove_secondary', 'sink')),
+  bucket text not null,
   order_index integer not null default 0,
   status text not null check (status in ('todo', 'doing', 'done', 'archived')),
   est_minutes integer null,
@@ -120,3 +120,6 @@ for all
 to authenticated
 using (true)
 with check (true);
+
+-- Migration: allow custom bucket IDs (remove core-only check constraint)
+alter table public.mt_tasks drop constraint if exists mt_tasks_bucket_check;

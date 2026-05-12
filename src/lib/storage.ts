@@ -1172,7 +1172,9 @@ export async function initializeCloudSync(force = false) {
     suppressCloudWrites = true;
 
     if (remoteHasData) {
-      writeTasksLocal(remoteTasks);
+      const remoteTaskIds = new Set(remoteTasks.map(t => t.id));
+      const localOnlyTasks = localTasks.filter(t => !remoteTaskIds.has(t.id));
+      writeTasksLocal([...remoteTasks, ...localOnlyTasks]);
       writeHighlightsLocal(enforceSingleActiveHighlight(normalizeHighlights(remoteHighlights)));
       writeSettingsLocal(remoteSettings || { ...DEFAULT_SETTINGS });
     } else if (localHasData) {
