@@ -445,7 +445,12 @@ const FogonsPage: React.FC = () => {
     void initializeCloudSync(true).finally(() => {
       if (!disposed) doRefresh();
     });
-    return () => { disposed = true; };
+    const onConfigsChanged = () => { if (!disposed) doRefresh(); };
+    window.addEventListener('mt:bucket-configs-changed', onConfigsChanged);
+    return () => {
+      disposed = true;
+      window.removeEventListener('mt:bucket-configs-changed', onConfigsChanged);
+    };
   }, []);
 
   const handleAddTask = (bucketId: string) => {

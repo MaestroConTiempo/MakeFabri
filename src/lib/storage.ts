@@ -1175,10 +1175,7 @@ export async function initializeCloudSync(force = false) {
           .maybeSingle();
         if (remoteConfigsRow?.configs) {
           const remoteList = remoteConfigsRow.configs as BucketConfig[];
-          const localList = getBucketConfigs();
-          const remoteIds = new Set(remoteList.map((b: BucketConfig) => b.id));
-          const onlyLocal = localList.filter(b => !remoteIds.has(b.id));
-          writeBucketConfigsLocal([...remoteList, ...onlyLocal]);
+          writeBucketConfigsLocal(remoteList);
         } else {
           const localConfigs = getBucketConfigs();
           if (localConfigs.some(c => c.id.startsWith('custom_'))) {
