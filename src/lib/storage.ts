@@ -456,19 +456,12 @@ async function pushBucketNamesToCloud(bucketNames: BucketNames) {
 let isBucketConfigsTableMissing = false;
 
 async function pushBucketConfigsToCloud(configs: BucketConfig[]) {
-  if (!supabase || isBucketConfigsTableMissing) {
-    console.warn('[sync] pushBucketConfigsToCloud skipped', { supabase: !!supabase, isBucketConfigsTableMissing });
-    return;
-  }
+  if (!supabase || isBucketConfigsTableMissing) return;
   try {
-    const userId = await ensureCloudUserId();
-    if (!userId) return;
-    console.log('[sync] pushing bucket configs', configs.map(c => c.id));
     const { error } = await supabase
       .from(TABLES.bucketConfigs)
-      .upsert({ user_id: userId, configs }, { onConflict: 'user_id' });
+      .upsert({ id: 'global', configs }, { onConflict: 'id' });
     if (error) throw error;
-    console.log('[sync] bucket configs pushed ok');
   } catch (e) {
     console.error('[sync] pushBucketConfigsToCloud error', e);
     isBucketConfigsTableMissing = true;
@@ -1172,22 +1165,18 @@ export async function initializeCloudSync(force = false) {
       await pushBucketNamesToCloud(localBucketNames);
     }
 
-    console.log('[sync] bucket configs fetch — isMissing:', isBucketConfigsTableMissing, 'userId:', userId);
     if (!isBucketConfigsTableMissing) {
       try {
         const { data: remoteConfigsRow, error: configsError } = await supabase
           .from(TABLES.bucketConfigs)
           .select('configs')
-          .eq('user_id', userId)
+          .eq('id', 'global')
           .maybeSingle();
-        console.log('[sync] bucket configs remote row:', remoteConfigsRow, 'error:', configsError);
+        if (configsError) throw configsError;
         if (remoteConfigsRow?.configs) {
-          const remoteList = remoteConfigsRow.configs as BucketConfig[];
-          console.log('[sync] writing remote configs:', remoteList.map(c => c.id));
-          writeBucketConfigsLocal(remoteList);
+          writeBucketConfigsLocal(remoteConfigsRow.configs as BucketConfig[]);
         } else {
           const localConfigs = getBucketConfigs();
-          console.log('[sync] no remote configs, local:', localConfigs.map(c => c.id));
           if (localConfigs.some(c => c.id.startsWith('custom_'))) {
             await pushBucketConfigsToCloud(localConfigs);
           }
