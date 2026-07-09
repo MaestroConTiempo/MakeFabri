@@ -1,5 +1,10 @@
 -- Global bucket configs (fogones) synced across devices.
 -- Run this on existing projects to enable cloud sync for custom fogones.
+--
+-- If mt_bucket_configs already exists with the old per-device schema
+-- (primary key `user_id` instead of `id`), use
+-- bucket_configs_migrate_to_global.sql instead — this script alone will
+-- not touch an existing table (create table if not exists is a no-op).
 
 create table if not exists public.mt_bucket_configs (
   id text primary key check (id = 'global'),

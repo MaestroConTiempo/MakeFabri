@@ -348,6 +348,13 @@ function isBucketNamesTableMissing(error: unknown): boolean {
   return code === '42P01' || message.includes(TABLES.bucketNames);
 }
 
+function isBucketConfigsTableMissing(error: unknown): boolean {
+  if (!error || typeof error !== 'object') return false;
+  const message = 'message' in error && typeof error.message === 'string' ? error.message : '';
+  const code = 'code' in error && typeof error.code === 'string' ? error.code : '';
+  return code === '42P01' || message.includes(TABLES.bucketConfigs);
+}
+
 function enqueueCloudWrite(op: () => Promise<void>) {
   if (!hasSupabaseConfig() || !supabase || suppressCloudWrites) return;
 
@@ -453,18 +460,13 @@ async function pushBucketNamesToCloud(bucketNames: BucketNames) {
   }
 }
 
-let isBucketConfigsTableMissing = false;
-
 async function pushBucketConfigsToCloud(configs: BucketConfig[]) {
-  if (!supabase || isBucketConfigsTableMissing) return;
-  try {
-    const { error } = await supabase
-      .from(TABLES.bucketConfigs)
-      .upsert({ id: 'global', configs }, { onConflict: 'id' });
-    if (error) throw error;
-  } catch (e) {
-    console.error('[sync] pushBucketConfigsToCloud error', e);
-    isBucketConfigsTableMissing = true;
+  if (!supabase) return;
+  const { error } = await supabase
+    .from(TABLES.bucketConfigs)
+    .upsert({ id: 'global', configs }, { onConflict: 'id' });
+  if (error && !isBucketConfigsTableMissing(error)) {
+    console.error('[sync] pushBucketConfigsToCloud error', error);
   }
 }
 
@@ -1165,25 +1167,21 @@ export async function initializeCloudSync(force = false) {
       await pushBucketNamesToCloud(localBucketNames);
     }
 
-    if (!isBucketConfigsTableMissing) {
-      try {
-        const { data: remoteConfigsRow, error: configsError } = await supabase
-          .from(TABLES.bucketConfigs)
-          .select('configs')
-          .eq('id', 'global')
-          .maybeSingle();
-        if (configsError) throw configsError;
-        if (remoteConfigsRow?.configs) {
-          writeBucketConfigsLocal(remoteConfigsRow.configs as BucketConfig[]);
-        } else {
-          const localConfigs = getBucketConfigs();
-          if (localConfigs.some(c => c.id.startsWith('custom_'))) {
-            await pushBucketConfigsToCloud(localConfigs);
-          }
+    {
+      const { data: remoteConfigsRow, error: configsError } = await supabase
+        .from(TABLES.bucketConfigs)
+        .select('configs')
+        .eq('id', 'global')
+        .maybeSingle();
+      if (configsError && !isBucketConfigsTableMissing(configsError)) {
+        console.error('[sync] bucket configs fetch error:', configsError);
+      } else if (remoteConfigsRow?.configs) {
+        writeBucketConfigsLocal(remoteConfigsRow.configs as BucketConfig[]);
+      } else if (!configsError) {
+        const localConfigs = getBucketConfigs();
+        if (localConfigs.some(c => c.id.startsWith('custom_'))) {
+          await pushBucketConfigsToCloud(localConfigs);
         }
-      } catch (e) {
-        console.error('[sync] bucket configs fetch error:', e);
-        isBucketConfigsTableMissing = true;
       }
     }
 
