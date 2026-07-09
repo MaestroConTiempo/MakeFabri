@@ -56,6 +56,7 @@ create table if not exists public.mt_bucket_names (
   stove_main_name text not null default '',
   stove_secondary_name text not null default '',
   sink_name text not null default '',
+  custom_names jsonb not null default '{}'::jsonb,
   updated_at timestamptz not null default timezone('utc'::text, now())
 );
 

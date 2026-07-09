@@ -83,6 +83,7 @@ interface BucketNamesRow {
   stove_main_name: string;
   stove_secondary_name: string;
   sink_name: string;
+  custom_names: Record<string, string> | null;
   updated_at: string;
 }
 
@@ -324,11 +325,16 @@ function fromSettingsRow(row: SettingsRow): AppSettings {
 }
 
 function toBucketNamesRow(bucketNames: BucketNames): BucketNamesRow {
+  const customNames: Record<string, string> = {};
+  for (const [id, name] of Object.entries(bucketNames)) {
+    if (!(CORE_BUCKET_IDS as readonly string[]).includes(id)) customNames[id] = name;
+  }
   return {
     id: SHARED_BUCKET_NAMES_ROW_ID,
     stove_main_name: bucketNames['stove_main'] ?? '',
     stove_secondary_name: bucketNames['stove_secondary'] ?? '',
     sink_name: bucketNames['sink'] ?? '',
+    custom_names: customNames,
     updated_at: new Date().toISOString(),
   };
 }
@@ -338,6 +344,7 @@ function fromBucketNamesRow(row: BucketNamesRow): BucketNames {
     stove_main: row.stove_main_name || '',
     stove_secondary: row.stove_secondary_name || '',
     sink: row.sink_name || '',
+    ...(row.custom_names ?? {}),
   };
 }
 

@@ -6,8 +6,12 @@ create table if not exists public.mt_bucket_names (
   stove_main_name text not null default '',
   stove_secondary_name text not null default '',
   sink_name text not null default '',
+  custom_names jsonb not null default '{}'::jsonb,
   updated_at timestamptz not null default timezone('utc'::text, now())
 );
+
+-- If the table already existed without this column (older installs):
+alter table public.mt_bucket_names add column if not exists custom_names jsonb not null default '{}'::jsonb;
 
 drop trigger if exists trg_mt_bucket_names_updated_at on public.mt_bucket_names;
 create trigger trg_mt_bucket_names_updated_at
